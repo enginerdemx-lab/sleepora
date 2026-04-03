@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'dart:math';
 
@@ -11,12 +12,16 @@ import '../widgets/liquid_glass_tab_bar.dart';
 import '../services/review_service.dart';
 import '../services/subscription_service.dart';
 import '../services/sleep_audio_handler.dart';
+import '../services/auth_service.dart';
+import '../widgets/plus_dialog.dart';
 import '../screens/sounds_screen.dart';
 import 'favorites_screen.dart';
 import 'record_screen.dart';
 import 'games_screen.dart';
 import 'settings_screen.dart';
+import 'paywall_screen.dart';
 import '../services/localization_service.dart';
+import '../services/sleep_tracking_service.dart';
 
 // Hangi oynatıcının şu an "ön planda" (aktif) olduğunu takip eden enum.
 enum ActivePlayer { none, single, mixer, shuffle }
@@ -66,6 +71,11 @@ class _HomeScreenState extends State<HomeScreen> {
   // Kilit ekranı handler'ına kısa yol — singleton üzerinden
   SleepAudioHandler? get _audioHandler => SleepAudioHandler.instance;
 
+  // ─── Premium ses önizleme (Preview) ───
+  bool _isPreviewMode = false;
+  Timer? _previewTimer;
+  int _previewRemainingSeconds = 0;
+
   @override
   void initState() {
     super.initState();
@@ -89,6 +99,7 @@ class _HomeScreenState extends State<HomeScreen> {
           h.onPlayPause = _togglePlayPause;
           h.onStop = _closePlayer;
           h.onSkipToNext = _playNextSound;
+          h.onSkipToPrevious = _playPreviousSound;
           h.updateNowPlaying(
             title: _playingSound!.localizedName,
             isPlaying: _isPlaying,
@@ -98,6 +109,7 @@ class _HomeScreenState extends State<HomeScreen> {
         h.onPlayPause = _toggleMixerPlay;
         h.onStop = _closeMixerPlayer;
         h.onSkipToNext = null;
+        h.onSkipToPrevious = null;
         h.updateNowPlaying(
           title: _mixerLabel ?? 'Karıştırıcı',
           isPlaying: _mixerPlaying,
@@ -106,11 +118,13 @@ class _HomeScreenState extends State<HomeScreen> {
         h.onPlayPause = _toggleShufflePlayPause;
         h.onStop = _stopShuffle;
         h.onSkipToNext = null;
+        h.onSkipToPrevious = null;
         h.updateNowPlaying(title: 'Karışık Çalma', isPlaying: true);
       case ActivePlayer.none:
         h.onPlayPause = null;
         h.onStop = null;
         h.onSkipToNext = null;
+        h.onSkipToPrevious = null;
         h.updateNowPlaying(title: '', isPlaying: false);
     }
   }
@@ -130,6 +144,21 @@ class _HomeScreenState extends State<HomeScreen> {
       _updatePlayer(allSounds[skipIdx]);
     } else {
       _updatePlayer(nextSound);
+    }
+  }
+
+  /// Kilit ekranından önceki sese dön
+  void _playPreviousSound() {
+    if (_playingSound == null) return;
+    final currentIdx = allSounds.indexOf(_playingSound!);
+    if (currentIdx < 0) return;
+    final prevIdx = (currentIdx - 1 + allSounds.length) % allSounds.length;
+    final prevSound = allSounds[prevIdx];
+    if (SubscriptionService().isSoundPremium(prevSound.name)) {
+      final skipIdx = (prevIdx - 1 + allSounds.length) % allSounds.length;
+      _updatePlayer(allSounds[skipIdx]);
+    } else {
+      _updatePlayer(prevSound);
     }
   }
 
@@ -162,6 +191,7 @@ class _HomeScreenState extends State<HomeScreen> {
     _loc.removeListener(_onLanguageChanged);
     SubscriptionService().removeListener(_onLanguageChanged);
     _positionSub?.cancel();
+    _previewTimer?.cancel();
     _shuffleChangeTimer?.cancel();
     _shuffleMasterTimer?.cancel();
     _audioPlayer1.dispose();
@@ -192,8 +222,15 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   // ─── Tek ses oynatma (SoundsScreen'den çağrılır) ───
-  void _updatePlayer(Sound? sound) async {
+  void _updatePlayer(Sound? sound, {bool isPreview = false}) async {
     _stopCrossfadeLoop();
+    _cancelPreviewTimer();
+
+    // Premium ses kontrolü — Plus değilse her zaman preview modunda çal
+    if (sound != null && !isPreview && !SubscriptionService().isPremium &&
+        SubscriptionService().isSoundPremium(sound.name)) {
+      isPreview = true;
+    }
 
     // Tüm diğer modları temizle
     if (sound != null) {
@@ -204,6 +241,7 @@ class _HomeScreenState extends State<HomeScreen> {
       _playingSound = sound;
       _isPlaying = sound != null;
       _miniPlayerCollapsed = false;
+      _isPreviewMode = isPreview;
       _activePlayer = sound != null ? ActivePlayer.single : ActivePlayer.none;
       if (sound != null) sound.isPlaying = true;
     });
@@ -211,20 +249,81 @@ class _HomeScreenState extends State<HomeScreen> {
     _syncNowPlaying();
 
     if (sound != null) {
+      // Uyku takibini başlat (sadece gerçek oturumlar — preview hariç)
+      if (!isPreview) {
+        SleepTrackingService().startSession(sound.name);
+      }
+      // Preview timer'ı hemen başlat — async ses yüklenmesini bekleme,
+      // böylece popup anında açılır ve geri sayım doğru çalışır.
+      if (isPreview) {
+        _startPreviewTimer(sound);
+      }
       try {
         _activePlayerIndex = 1;
         await _audioPlayer1.setAsset(sound.assetPath);
-        await _audioPlayer1.setLoopMode(LoopMode.off);
+        // Preview modunda loop kapalı — timer bitince zaten durduruluyor
+        await _audioPlayer1.setLoopMode(isPreview ? LoopMode.off : LoopMode.one);
         await _audioPlayer1.setVolume(1.0);
         await _audioPlayer1.play();
-        _startCrossfadeLoop(sound);
       } catch (e) {
         debugPrint('Ses hatası: $e');
       }
     } else {
+      // Ses durduruldu — uyku oturumunu kaydet
+      SleepTrackingService().endSession();
       try { await _audioPlayer1.stop(); } catch (_) {}
       try { await _audioPlayer2.stop(); } catch (_) {}
     }
+  }
+
+  // ─── Preview Timer ───
+  void _startPreviewTimer(Sound sound) {
+    _previewRemainingSeconds = PremiumContent.previewDurationSeconds;
+    _previewTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (!mounted) { timer.cancel(); return; }
+      setState(() => _previewRemainingSeconds--);
+      if (_previewRemainingSeconds <= 2 && _previewRemainingSeconds > 0) {
+        // Son 2 saniyede fade-out
+        final vol = _previewRemainingSeconds / 2.0;
+        _audioPlayer1.setVolume(vol.clamp(0.0, 1.0));
+        _audioPlayer2.setVolume(vol.clamp(0.0, 1.0));
+      }
+      if (_previewRemainingSeconds <= 0) {
+        timer.cancel();
+        // Her iki player'ı da kesin durdur
+        _audioPlayer1.stop();
+        _audioPlayer2.stop();
+        _stopCrossfadeLoop();
+        setState(() {
+          sound.isPlaying = false;
+          _playingSound = null;
+          _isPlaying = false;
+          _isPreviewMode = false;
+          _activePlayer = ActivePlayer.none;
+        });
+        _syncNowPlaying();
+        // Önizleme bitti — premium dialog göster (uyku takibi KAYDETME, preview)
+        _showPreviewEndDialog(sound);
+      }
+    });
+  }
+
+  void _cancelPreviewTimer() {
+    _previewTimer?.cancel();
+    _previewTimer = null;
+    _isPreviewMode = false;
+  }
+
+  // ─── Premium Önizleme Bitti Dialogu ───
+  void _showPreviewEndDialog(Sound sound) {
+    if (!mounted) return;
+    PlusDialog.show(
+      context,
+      title: _loc.t('PreviewEndTitle'),
+      description: _loc.t('PreviewEndDesc'),
+      featureTitle: sound.localizedName,
+      secondaryIcon: sound.icon,
+    );
   }
 
   void _stopCrossfadeLoop() {
@@ -486,7 +585,7 @@ class _HomeScreenState extends State<HomeScreen> {
     try {
       if (_isPlaying) {
         await active.play();
-        if (_playingSound != null) _startCrossfadeLoop(_playingSound!);
+        // Custom crossfade call removed to prevent early stopping issues
       } else {
         _stopCrossfadeLoop();
         await active.pause();
@@ -499,6 +598,8 @@ class _HomeScreenState extends State<HomeScreen> {
   // ─── Tekli ses kapat ───
   void _closePlayer() async {
     _stopCrossfadeLoop();
+    // Uyku oturumunu sonlandır
+    SleepTrackingService().endSession();
     try { await _audioPlayer1.stop(); } catch (_) {}
     try { await _audioPlayer2.stop(); } catch (_) {}
     setState(() {
@@ -551,7 +652,18 @@ class _HomeScreenState extends State<HomeScreen> {
 
     if (targetList.isEmpty) return;
 
-    _clearAllSounds();
+    // Önceki modları temizle (shuffle'ı durdurmadan)
+    _stopCrossfadeLoop();
+    _cancelPreviewTimer();
+    _shuffleChangeTimer?.cancel();
+    _shuffleMasterTimer?.cancel();
+    _playingSound?.isPlaying = false;
+    if (_mixerPlaying) {
+      _stopMixerPlayers();
+      _mixerPlaying = false;
+    }
+    try { _audioPlayer1.stop(); } catch (_) {}
+    try { _audioPlayer2.stop(); } catch (_) {}
 
     setState(() {
       _isShufflePlaying = true;
@@ -671,6 +783,7 @@ class _HomeScreenState extends State<HomeScreen> {
           SoundsScreen(
             onSoundChanged: _updatePlayer,
             currentPlayingSound: _playingSound,
+            isPreviewMode: _isPreviewMode,
             onGoToMixer: _goToMixer,
             onShuffle: _shufflePlay,
             onSleepGuide: _showSleepGuide,

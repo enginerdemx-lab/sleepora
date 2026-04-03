@@ -1,11 +1,15 @@
+import 'dart:ui';
 import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
 import '../screens/sounds_screen.dart';
 import '../widgets/sound_card.dart';
 import '../models/shuffle_settings.dart';
 import 'paywall_screen.dart';
+import 'login_screen.dart';
 import '../services/localization_service.dart';
 import '../services/subscription_service.dart';
+import '../services/auth_service.dart';
+import '../widgets/plus_dialog.dart';
 
 typedef MixerChangedCallback = void Function(List<Sound> selected, VoidCallback? onClear, VoidCallback? onVolume, VoidCallback? onSave);
 typedef VolumeChangeCallback = void Function(int index, double volume);
@@ -61,11 +65,22 @@ class FavoritesScreenState extends State<FavoritesScreen> with SingleTickerProvi
   void initState() {
     super.initState();
     _tabController = TabController(length: 3, vsync: this);
-    _tabController.addListener(() => setState(() => _selectedTab = _tabController.index));
+    _tabController.animation?.addListener(_onTabAnimation);
+  }
+
+  void _onTabAnimation() {
+    final newIndex = (_tabController.animation!.value).round();
+    if (newIndex != _selectedTab) {
+      setState(() => _selectedTab = newIndex);
+    }
   }
 
   @override
-  void dispose() { _tabController.dispose(); super.dispose(); }
+  void dispose() {
+    _tabController.animation?.removeListener(_onTabAnimation);
+    _tabController.dispose();
+    super.dispose();
+  }
 
   /// Dışarıdan karıştırıcı tabına geçmek için
   void goToMixerTab() {
@@ -377,6 +392,11 @@ class _MixerTabState extends State<_MixerTab> {
       _showPremiumSoundDialog();
       return;
     }
+    // Mixer limit kontrolü — ekleme yaparken
+    if (!_selected.contains(sound) && SubscriptionService().isMixerLimitReached(_selected.length)) {
+      _showMixerLimitDialog();
+      return;
+    }
     setState(() {
       if (_selected.contains(sound)) _selected.remove(sound);
       else _selected.add(sound);
@@ -385,50 +405,22 @@ class _MixerTabState extends State<_MixerTab> {
   }
 
   void _showPremiumSoundDialog() {
-    showDialog(
-      context: context,
-      builder: (ctx) => Dialog(
-        backgroundColor: const Color(0xFF1E1540),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                width: 56, height: 56,
-                decoration: BoxDecoration(color: Colors.amber.withValues(alpha: 0.15), shape: BoxShape.circle),
-                child: const Icon(Icons.diamond_rounded, color: Colors.amber, size: 28),
-              ),
-              const SizedBox(height: 16),
-              Text(_loc.t('PremiumSoundTitle'), style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w700)),
-              const SizedBox(height: 8),
-              Text(_loc.t('PremiumSoundDesc'), style: TextStyle(color: Colors.white.withValues(alpha: 0.6), fontSize: 14), textAlign: TextAlign.center),
-              const SizedBox(height: 20),
-              GestureDetector(
-                onTap: () {
-                  Navigator.pop(ctx);
-                  PaywallScreen.showIfNeeded(context, feature: _loc.t('FeatPremiumSounds'));
-                },
-                child: Container(
-                  width: double.infinity, height: 50,
-                  decoration: BoxDecoration(gradient: const LinearGradient(colors: [Color(0xFF7C3AED), Color(0xFF5B21B6)]), borderRadius: BorderRadius.circular(14)),
-                  child: Center(child: Text(_loc.t('BtnGoPremium'), style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w700))),
-                ),
-              ),
-              const SizedBox(height: 10),
-              GestureDetector(
-                onTap: () => Navigator.pop(ctx),
-                child: Container(
-                  width: double.infinity, height: 44,
-                  decoration: BoxDecoration(color: Colors.white.withValues(alpha: 0.08), borderRadius: BorderRadius.circular(14)),
-                  child: Center(child: Text(_loc.t('BtnCancel'), style: TextStyle(color: Colors.white.withValues(alpha: 0.6), fontSize: 14))),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
+    PlusDialog.show(
+      context,
+      title: _loc.t('PremiumSoundTitle'),
+      description: _loc.t('PremiumSoundDesc'),
+      featureTitle: _loc.t('FeatPremiumSounds'),
+      secondaryIcon: Icons.music_note_rounded,
+    );
+  }
+
+  void _showMixerLimitDialog() {
+    PlusDialog.show(
+      context,
+      title: _loc.t('MixerLimitTitle'),
+      description: _loc.t('MixerLimitDesc'),
+      featureTitle: _loc.t('FeatMixer'),
+      secondaryIcon: Icons.queue_music_rounded,
     );
   }
 
@@ -551,7 +543,17 @@ class _MixerTabState extends State<_MixerTab> {
     return Column(children: [
       Padding(padding: const EdgeInsets.symmetric(horizontal: 16), child: Row(children: [
         Expanded(child: GestureDetector(
-          onTap: () { setState(() { _selected.clear(); _selected.addAll(allSounds); }); _notify(); },
+          onTap: () {
+            // Limit kontrolü — free kullanıcılar için max 2 ses seç
+            List<Sound> toSelect;
+            if (SubscriptionService().isPremium) {
+              toSelect = List.from(allSounds);
+            } else {
+              toSelect = allSounds.where((s) => !SubscriptionService().isSoundPremium(s.name)).take(PremiumContent.freeMixerMaxSounds).toList();
+            }
+            setState(() { _selected.clear(); _selected.addAll(toSelect); });
+            _notify();
+          },
           child: Container(height: 44, decoration: BoxDecoration(gradient: LinearGradient(colors: [AppColors.purpleDark, AppColors.purple]), borderRadius: BorderRadius.circular(12)),
             child: Center(child: Text(_loc.t('BtnSelectAll'), style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600)))))),
         const SizedBox(width: 12),

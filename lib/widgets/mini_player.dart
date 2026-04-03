@@ -4,7 +4,9 @@ import 'dart:ui';
 import '../theme/app_theme.dart';
 import '../screens/sounds_screen.dart';
 import '../services/subscription_service.dart';
+import '../services/auth_service.dart';
 import '../screens/paywall_screen.dart';
+import '../screens/login_screen.dart';
 import '../services/localization_service.dart';
 
 class MiniPlayer extends StatefulWidget {
@@ -117,10 +119,152 @@ class _MiniPlayerState extends State<MiniPlayer> with TickerProviderStateMixin {
           _timerActive = false;
           _timerMinutes = null;
           widget.onPlayPause(); // Durdur
+          // Timer bitti — giriş yapılmamışsa uyku takibi prompt'u
+          if (!AuthService().isLoggedIn) {
+            Future.delayed(const Duration(milliseconds: 800), () {
+              if (mounted) _showSleepTrackingPrompt();
+            });
+          }
         }
       });
       if (_timerActive) _tickTimer();
     });
+  }
+
+  void _showSleepTrackingPrompt() {
+    showDialog(
+      context: context,
+      barrierColor: Colors.black.withValues(alpha: 0.6),
+      builder: (ctx) => Dialog(
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        insetPadding: const EdgeInsets.symmetric(horizontal: 32),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(28),
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 30, sigmaY: 30),
+            child: Container(
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(28),
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [
+                    Colors.white.withValues(alpha: 0.12),
+                    Colors.white.withValues(alpha: 0.05),
+                    AppColors.purple.withValues(alpha: 0.08),
+                  ],
+                ),
+                border: Border.all(color: Colors.white.withValues(alpha: 0.15), width: 0.5),
+                boxShadow: [
+                  BoxShadow(color: AppColors.purple.withValues(alpha: 0.2), blurRadius: 40, spreadRadius: -8),
+                  BoxShadow(color: Colors.black.withValues(alpha: 0.3), blurRadius: 30, offset: const Offset(0, 10)),
+                ],
+              ),
+              child: Padding(
+                padding: const EdgeInsets.all(28),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      width: 72, height: 72,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        gradient: RadialGradient(
+                          colors: [const Color(0xFF10B981).withValues(alpha: 0.3), const Color(0xFF10B981).withValues(alpha: 0.05)],
+                        ),
+                        border: Border.all(color: Colors.white.withValues(alpha: 0.1), width: 0.5),
+                        boxShadow: [
+                          BoxShadow(color: const Color(0xFF10B981).withValues(alpha: 0.4), blurRadius: 24, spreadRadius: -4),
+                        ],
+                      ),
+                      child: const Icon(Icons.bedtime_rounded, color: Colors.white, size: 32),
+                    ),
+                    const SizedBox(height: 20),
+                    Text(
+                      _loc.t('LoginSleepTrackMsg'),
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w700, letterSpacing: -0.3),
+                    ),
+                    const SizedBox(height: 10),
+                    Text(
+                      _loc.t('LoginSleepTrackDesc'),
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: Colors.white.withValues(alpha: 0.6), fontSize: 14, height: 1.5),
+                    ),
+                    const SizedBox(height: 8),
+                    // Sync vurgusu
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.sync_rounded, color: Colors.white.withValues(alpha: 0.4), size: 14),
+                        const SizedBox(width: 6),
+                        Flexible(
+                          child: Text(
+                            _loc.t('SyncDevicesMsg'),
+                            style: TextStyle(color: Colors.white.withValues(alpha: 0.4), fontSize: 11),
+                            maxLines: 2,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 24),
+                    GestureDetector(
+                      onTap: () async {
+                        Navigator.pop(ctx);
+                        await LoginScreen.show(context, feature: _loc.t('LoginSleepTrackMsg'));
+                      },
+                      child: Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(16),
+                          gradient: const LinearGradient(
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                            colors: [Color(0xFF10B981), Color(0xFF059669)],
+                          ),
+                          border: Border.all(color: Colors.white.withValues(alpha: 0.2), width: 0.5),
+                          boxShadow: [
+                            BoxShadow(color: const Color(0xFF10B981).withValues(alpha: 0.4), blurRadius: 16, spreadRadius: -4, offset: const Offset(0, 4)),
+                          ],
+                        ),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            const Icon(Icons.login_rounded, color: Colors.white, size: 18),
+                            const SizedBox(width: 8),
+                            Text(_loc.t('BtnSignIn'), style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w700)),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    GestureDetector(
+                      onTap: () => Navigator.pop(ctx),
+                      child: Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(16),
+                          color: Colors.white.withValues(alpha: 0.06),
+                          border: Border.all(color: Colors.white.withValues(alpha: 0.08), width: 0.5),
+                        ),
+                        child: Text(
+                          _loc.t('BtnLater'),
+                          textAlign: TextAlign.center,
+                          style: TextStyle(color: Colors.white.withValues(alpha: 0.5), fontSize: 14, fontWeight: FontWeight.w500),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
   }
 
   void _cancelTimer() {

@@ -3,6 +3,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../theme/app_theme.dart';
 import '../services/subscription_service.dart';
 import '../services/localization_service.dart';
+import '../services/notification_service.dart';
 
 class PaywallScreen extends StatefulWidget {
   final String? featureTitle;
@@ -128,6 +129,22 @@ class _PaywallScreenState extends State<PaywallScreen> with SingleTickerProvider
     }
   }
 
+  void _onCloseTapped() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (ctx) => const _AbandonBottomSheet(),
+    ).then((res) {
+      if (res == 'start_trial') {
+        setState(() => _selectedPlan = 0); // Yıllık plana teşvik et
+        _purchase();
+      } else if (res == 'close_all') {
+        if (mounted) Navigator.pop(context, false);
+      }
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final bottomPad = MediaQuery.of(context).padding.bottom;
@@ -163,7 +180,7 @@ class _PaywallScreenState extends State<PaywallScreen> with SingleTickerProvider
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
                       GestureDetector(
-                        onTap: () => Navigator.pop(context, false),
+                        onTap: _onCloseTapped,
                         child: Container(
                           width: 34,
                           height: 34,
@@ -643,4 +660,197 @@ class _StarsPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+}
+
+// ─── Abandon / Exit Intent Bottom Sheet ───
+class _AbandonBottomSheet extends StatefulWidget {
+  const _AbandonBottomSheet();
+
+  @override
+  State<_AbandonBottomSheet> createState() => _AbandonBottomSheetState();
+}
+
+class _AbandonBottomSheetState extends State<_AbandonBottomSheet> {
+  bool _remindMe = true;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(20, 24, 20, 32),
+      decoration: const BoxDecoration(
+        color: Color(0xFF161622),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      child: SafeArea(
+        top: false,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // Head
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text(
+                  "Ücretsiz denemeye davetlisiniz!",
+                  style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w700),
+                ),
+                GestureDetector(
+                  onTap: () => Navigator.pop(context),
+                  child: Container(
+                    padding: const EdgeInsets.all(6),
+                    decoration: BoxDecoration(color: Colors.white.withValues(alpha:0.08), shape: BoxShape.circle),
+                    child: const Icon(Icons.close, color: Colors.white70, size: 16),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 24),
+
+            _buildTimelineStep(
+              icon: Icons.nightlight_round,
+              title: "Bugün-Ücretsiz Başla",
+              desc: "Daha hızlı uykuya dalın ve daha kolay uyanın.",
+              isLast: false,
+            ),
+            _buildTimelineStep(
+              icon: Icons.alarm,
+              title: "Gün 5-Deneme hatırlatıcı",
+              desc: "Denemenizin sona ermek üzere olduğunu size hatırlatacağız.",
+              isLast: false,
+            ),
+            _buildTimelineStep(
+              icon: Icons.check,
+              title: "Gün 7-Deneme sona eriyor",
+              desc: "Ücretlendirmelerden kaçınmak için bu tarihten önce iptal edin.",
+              isLast: true,
+            ),
+
+            const SizedBox(height: 16),
+
+            // Switch
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              decoration: BoxDecoration(
+                color: const Color(0xFF211E33),
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.notifications_active_outlined, color: Colors.white54, size: 22),
+                  const SizedBox(width: 12),
+                  const Expanded(
+                    child: Text("Deneme bitmeden önce bana hatırlat", style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w500)),
+                  ),
+                  SizedBox(
+                    height: 24,
+                    width: 44,
+                    child: Switch(
+                      value: _remindMe,
+                      onChanged: (v) => setState(() => _remindMe = v),
+                      activeColor: Colors.white,
+                      activeTrackColor: AppColors.purple,
+                      inactiveThumbColor: Colors.white70,
+                      inactiveTrackColor: Colors.white24,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+            const SizedBox(height: 20),
+
+            // Button
+            GestureDetector(
+              onTap: () async {
+                // Hatırlatıcı açıksa 5 gün sonrası için bildirim planla
+                if (_remindMe) {
+                  await NotificationService().scheduleTrialEndReminder();
+                }
+                if (context.mounted) Navigator.pop(context, 'start_trial');
+              },
+              child: Container(
+                height: 54,
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(colors: [Color(0xFF8B5CF6), Color(0xFF6D28D9)]),
+                  borderRadius: BorderRadius.circular(27),
+                  boxShadow: [BoxShadow(color: const Color(0xFF8B5CF6).withValues(alpha:0.3), blurRadius: 10, offset: const Offset(0, 4))],
+                ),
+                child: const Center(
+                  child: Text("7 günlük denemeyi başlat", style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
+                ),
+              ),
+            ),
+
+            const SizedBox(height: 16),
+
+            // Footer link
+            Center(
+              child: GestureDetector(
+                onTap: () => Navigator.pop(context, 'close_all'),
+                child: const Text("Hayır, teşekkürler", style: TextStyle(color: Colors.white54, fontSize: 13, decoration: TextDecoration.underline)),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTimelineStep({required IconData icon, required String title, required String desc, required bool isLast}) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Left timeline track
+        Column(
+          children: [
+            Container(
+              width: 28,
+              height: 28,
+              decoration: BoxDecoration(color: AppColors.purple, shape: BoxShape.circle),
+              child: Icon(icon, color: Colors.white, size: 16),
+            ),
+            if (!isLast)
+              Container(
+                width: 2,
+                height: 50,
+                margin: const EdgeInsets.symmetric(vertical: 4),
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    final dotCount = (constraints.maxHeight / 8).floor();
+                    return Flex(
+                      direction: Axis.vertical,
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: List.generate(dotCount, (_) {
+                        return Container(width: 2, height: 4, decoration: BoxDecoration(color: AppColors.purple.withValues(alpha:0.5), borderRadius: BorderRadius.circular(1)));
+                      }),
+                    );
+                  },
+                ),
+              ),
+          ],
+        ),
+        const SizedBox(width: 14),
+        // Right content
+        Expanded(
+          child: Container(
+            margin: EdgeInsets.only(bottom: isLast ? 0 : 16),
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: const Color(0xFF1E1E2C), // Lighter card
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(title, style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold)),
+                const SizedBox(height: 4),
+                Text(desc, style: TextStyle(color: Colors.white.withValues(alpha:0.5), fontSize: 12, height: 1.4)),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
 }

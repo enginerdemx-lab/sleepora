@@ -16,6 +16,7 @@ class SleepAudioHandler extends BaseAudioHandler {
   void Function()? onPlayPause;
   void Function()? onStop;
   void Function()? onSkipToNext;
+  void Function()? onSkipToPrevious;
 
   /// Çalan ses değiştiğinde HomeScreen tarafından çağrılır.
   void updateNowPlaying({required String title, required bool isPlaying}) {
@@ -34,15 +35,18 @@ class SleepAudioHandler extends BaseAudioHandler {
       artist: 'Sleepora',
       displayTitle: title,
       displaySubtitle: 'Sleepora',
+      duration: const Duration(hours: 8), // Required by some iOS versions to show player
+      artUri: Uri.parse('asset:///assets/images/logo.png'), // iOS prefers media to have artwork otherwise it might reject showing it
     ));
 
     playbackState.add(PlaybackState(
       controls: [
+        MediaControl.skipToPrevious,
         isPlaying ? MediaControl.pause : MediaControl.play,
         MediaControl.skipToNext,
         MediaControl.stop,
       ],
-      systemActions: const {MediaAction.stop, MediaAction.skipToNext},
+      systemActions: const {MediaAction.stop, MediaAction.skipToNext, MediaAction.skipToPrevious},
       androidCompactActionIndices: const [0, 1],
       processingState: AudioProcessingState.ready,
       playing: isPlaying,
@@ -70,4 +74,8 @@ class SleepAudioHandler extends BaseAudioHandler {
   // Kilit ekranı: Sonraki sese geç
   @override
   Future<void> skipToNext() async => onSkipToNext?.call();
+
+  // Kilit ekranı: Önceki sese dön
+  @override
+  Future<void> skipToPrevious() async => onSkipToPrevious?.call();
 }

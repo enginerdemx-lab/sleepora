@@ -13,13 +13,15 @@ class SubscriptionIds {
 
 /// Premium olarak kilitli ses adları
 class PremiumContent {
-  static const List<String> sounds = ['Kolik', 'Pış Pış 2', 'Yıldız Tozu', 'Konuşma'];
+  static const List<String> sounds = ['Kolik', 'Pış Pış 2', 'Yıldız Tozu', 'Konuşma', 'Tren', 'Çamaşır Makinesi'];
   static const List<String> games = []; // Oyunlar ücretsiz — içlerinde premium özellikler var
   static const List<String> premiumQuizCategories = ['Tarih', 'Coğrafya', 'Bilim & Teknoloji'];
   static const int freeMinesweeperHints = 0; // Ücretsiz planda ipucu yok
   static const int freeTimerMaxMinutes = 45;
   static const int freeRecordingMaxCount = 1;
   static const int freeFavoriteMaxCount = 3;
+  static const int freeMixerMaxSounds = 2; // Ücretsiz planda karıştırıcıda max 2 ses
+  static const int previewDurationSeconds = 5; // Premium ses önizleme süresi
 }
 
 class SubscriptionService extends ChangeNotifier {
@@ -211,6 +213,12 @@ class SubscriptionService extends ChangeNotifier {
   bool isFavoriteLimitReached(int currentCount) {
     if (isPremium) return false;
     return currentCount >= PremiumContent.freeFavoriteMaxCount;
+  }
+
+  /// Premium kontrolü — karıştırıcı ses sayısı
+  bool isMixerLimitReached(int currentCount) {
+    if (isPremium) return false;
+    return currentCount >= PremiumContent.freeMixerMaxSounds;
   }
 
   /// Geliştirici test modu — Premium'u simüle et

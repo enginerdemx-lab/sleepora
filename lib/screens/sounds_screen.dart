@@ -1,3 +1,4 @@
+import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter_staggered_animations/flutter_staggered_animations.dart';
 import 'package:reorderable_grid_view/reorderable_grid_view.dart';
@@ -8,8 +9,11 @@ import 'dart:math' as math;
 import '../theme/app_theme.dart';
 import '../widgets/sound_card.dart';
 import '../services/subscription_service.dart';
+import '../services/auth_service.dart';
 import 'paywall_screen.dart';
+import 'login_screen.dart';
 import '../services/localization_service.dart';
+import '../widgets/plus_dialog.dart';
 
 class Sound {
   final String name; // Dahili anahtar — değişmez (premium, favori, playCount için)
@@ -28,8 +32,12 @@ class Sound {
     this.volume = 0.5,
   });
 
-  /// Dil ayarına göre çevrilmiş ses adı
-  String get localizedName => LocalizationService().t('Sound_$name');
+  /// Dil ayarına göre çevrilmiş ses adı (Sound_ prefix'i kullanıcıya gösterilmez)
+  String get localizedName {
+    final translated = LocalizationService().t('Sound_$name');
+    // Eğer çeviri bulunamadıysa key döner — Sound_ prefix'ini kaldır
+    return translated.startsWith('Sound_') ? translated.substring(6) : translated;
+  }
 }
 
 final List<Sound> allSounds = [
@@ -62,8 +70,9 @@ final List<Sound> allSounds = [
 ];
 
 class SoundsScreen extends StatefulWidget {
-  final Function(Sound?) onSoundChanged;
+  final Function(Sound?, {bool isPreview}) onSoundChanged;
   final Sound? currentPlayingSound;
+  final bool isPreviewMode;
   final VoidCallback? onGoToMixer;
   final VoidCallback? onShuffle;
   final VoidCallback? onSleepGuide;
@@ -73,6 +82,7 @@ class SoundsScreen extends StatefulWidget {
     super.key,
     required this.onSoundChanged,
     this.currentPlayingSound,
+    this.isPreviewMode = false,
     this.onGoToMixer,
     this.onShuffle,
     this.onSleepGuide,
@@ -140,9 +150,14 @@ class _SoundsScreenState extends State<SoundsScreen> with SingleTickerProviderSt
   }
 
   void _togglePlay(Sound sound) async {
-    // Premium ses kontrolü
+    // Premium ses — ön izleme modunda çal
     if (SubscriptionService().isSoundPremium(sound.name)) {
-      await PaywallScreen.showIfNeeded(context, feature: sound.name);
+      if (widget.currentPlayingSound == sound && sound.isPlaying) {
+        widget.onSoundChanged(null);
+      } else {
+        _incrementPlayCount(sound);
+        widget.onSoundChanged(sound, isPreview: true);
+      }
       return;
     }
     if (widget.currentPlayingSound == sound && sound.isPlaying) {
@@ -153,10 +168,16 @@ class _SoundsScreenState extends State<SoundsScreen> with SingleTickerProviderSt
     }
   }
 
-  void _toggleFavorite(Sound sound) {
+  void _toggleFavorite(Sound sound) async {
     // Favoriden çıkarma her zaman serbest
     if (sound.isFavorite) {
       setState(() => sound.isFavorite = false);
+      return;
+    }
+
+    // Giriş kontrolü — favori eklemek için giriş gerekli
+    if (!AuthService().isLoggedIn) {
+      _showLoginRequiredForFavorites();
       return;
     }
 
@@ -170,69 +191,171 @@ class _SoundsScreenState extends State<SoundsScreen> with SingleTickerProviderSt
     setState(() => sound.isFavorite = true);
   }
 
-  void _showFavoriteLimitDialog() {
+  // ─── Login gerekli dialog (Favoriler) ───
+  void _showLoginRequiredForFavorites() {
     showDialog(
       context: context,
+      barrierColor: Colors.black.withValues(alpha: 0.6),
       builder: (ctx) => Dialog(
-        backgroundColor: const Color(0xFF1A1025),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                width: 56,
-                height: 56,
-                decoration: BoxDecoration(
-                  color: const Color(0xFF8B5CF6).withValues(alpha:0.15),
-                  shape: BoxShape.circle,
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        insetPadding: const EdgeInsets.symmetric(horizontal: 32),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(28),
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 30, sigmaY: 30),
+            child: Container(
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(28),
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [
+                    Colors.white.withValues(alpha: 0.12),
+                    Colors.white.withValues(alpha: 0.05),
+                    AppColors.purple.withValues(alpha: 0.08),
+                  ],
                 ),
-                child: const Icon(Icons.favorite_rounded, color: Color(0xFF8B5CF6), size: 28),
+                border: Border.all(color: Colors.white.withValues(alpha: 0.15), width: 0.5),
+                boxShadow: [
+                  BoxShadow(color: AppColors.purple.withValues(alpha: 0.2), blurRadius: 40, spreadRadius: -8),
+                  BoxShadow(color: Colors.black.withValues(alpha: 0.3), blurRadius: 30, offset: const Offset(0, 10)),
+                ],
               ),
-              const SizedBox(height: 16),
-              Text(
-                _loc.t('FavLimitTitle'),
-                style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w700),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                _loc.t('FavLimitDesc'),
-                textAlign: TextAlign.center,
-                style: TextStyle(color: Colors.white.withValues(alpha:0.6), fontSize: 14, height: 1.4),
-              ),
-              const SizedBox(height: 20),
-              GestureDetector(
-                onTap: () {
-                  Navigator.pop(ctx);
-                  PaywallScreen.showIfNeeded(context, feature: _loc.t('FeatUnlimitedFavorite'));
-                },
-                child: Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.symmetric(vertical: 14),
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(colors: [AppColors.purple, AppColors.purpleDark]),
-                    borderRadius: BorderRadius.circular(14),
+              child: Stack(
+                children: [
+                  // Üst yansıma
+                  Positioned(
+                    top: 0, left: 0, right: 0, height: 60,
+                    child: Container(
+                      decoration: BoxDecoration(
+                        borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: [Colors.white.withValues(alpha: 0.1), Colors.white.withValues(alpha: 0.0)],
+                        ),
+                      ),
+                    ),
                   ),
-                  child: Text(
-                    _loc.t('BtnUpgrade'),
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w700),
+                  Padding(
+                    padding: const EdgeInsets.all(28),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        // Kalp ikonu
+                        Container(
+                          width: 72, height: 72,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            gradient: RadialGradient(
+                              colors: [AppColors.purple.withValues(alpha: 0.3), AppColors.purple.withValues(alpha: 0.05)],
+                            ),
+                            border: Border.all(color: Colors.white.withValues(alpha: 0.1), width: 0.5),
+                            boxShadow: [
+                              BoxShadow(color: AppColors.purple.withValues(alpha: 0.4), blurRadius: 24, spreadRadius: -4),
+                            ],
+                          ),
+                          child: const Icon(Icons.favorite_rounded, color: Colors.white, size: 32),
+                        ),
+                        const SizedBox(height: 20),
+                        Text(
+                          _loc.t('LoginFavoriteMsg'),
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w700, letterSpacing: -0.3),
+                        ),
+                        const SizedBox(height: 10),
+                        Text(
+                          _loc.t('LoginFavoriteDesc'),
+                          textAlign: TextAlign.center,
+                          style: TextStyle(color: Colors.white.withValues(alpha: 0.6), fontSize: 14, height: 1.5),
+                        ),
+                        const SizedBox(height: 8),
+                        // Sync vurgusu
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(Icons.sync_rounded, color: Colors.white.withValues(alpha: 0.4), size: 14),
+                            const SizedBox(width: 6),
+                            Flexible(
+                              child: Text(
+                                _loc.t('SyncDevicesMsg'),
+                                style: TextStyle(color: Colors.white.withValues(alpha: 0.4), fontSize: 11),
+                                maxLines: 2,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 24),
+                        // Giriş Yap butonu
+                        GestureDetector(
+                          onTap: () async {
+                            Navigator.pop(ctx);
+                            await LoginScreen.show(context, feature: _loc.t('LoginFavoriteMsg'));
+                          },
+                          child: Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.symmetric(vertical: 16),
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(16),
+                              gradient: const LinearGradient(
+                                begin: Alignment.topLeft,
+                                end: Alignment.bottomRight,
+                                colors: [Color(0xFF8B5CF6), Color(0xFF6D28D9)],
+                              ),
+                              border: Border.all(color: Colors.white.withValues(alpha: 0.2), width: 0.5),
+                              boxShadow: [
+                                BoxShadow(color: AppColors.purple.withValues(alpha: 0.5), blurRadius: 16, spreadRadius: -4, offset: const Offset(0, 4)),
+                              ],
+                            ),
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                const Icon(Icons.login_rounded, color: Colors.white, size: 18),
+                                const SizedBox(width: 8),
+                                Text(_loc.t('BtnSignIn'), style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w700)),
+                              ],
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        // Daha Sonra butonu
+                        GestureDetector(
+                          onTap: () => Navigator.pop(ctx),
+                          child: Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(16),
+                              color: Colors.white.withValues(alpha: 0.06),
+                              border: Border.all(color: Colors.white.withValues(alpha: 0.08), width: 0.5),
+                            ),
+                            child: Text(
+                              _loc.t('BtnLater'),
+                              textAlign: TextAlign.center,
+                              style: TextStyle(color: Colors.white.withValues(alpha: 0.5), fontSize: 14, fontWeight: FontWeight.w500),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
-                ),
+                ],
               ),
-              const SizedBox(height: 10),
-              GestureDetector(
-                onTap: () => Navigator.pop(ctx),
-                child: Text(
-                  _loc.t('BtnCancel'),
-                  style: TextStyle(color: Colors.white.withValues(alpha:0.4), fontSize: 14),
-                ),
-              ),
-            ],
+            ),
           ),
         ),
       ),
+    );
+  }
+
+  void _showFavoriteLimitDialog() {
+    PlusDialog.show(
+      context,
+      title: _loc.t('FavLimitTitle'),
+      description: _loc.t('FavLimitDesc'),
+      featureTitle: _loc.t('FeatUnlimitedFavorite'),
+      secondaryIcon: Icons.favorite_rounded,
     );
   }
 
@@ -374,6 +497,7 @@ class _SoundsScreenState extends State<SoundsScreen> with SingleTickerProviderSt
                     final card = SoundCard(
                       sound: sound,
                       isPremiumLocked: SubscriptionService().isSoundPremium(sound.name),
+                      isPreviewPlaying: widget.isPreviewMode && widget.currentPlayingSound == sound && sound.isPlaying,
                       onTap: _isEditing ? () {} : () => _togglePlay(sound),
                       onFavorite: () => _toggleFavorite(sound),
                       onLongPress: _isEditing ? null : () {

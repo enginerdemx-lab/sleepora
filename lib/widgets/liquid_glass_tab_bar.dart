@@ -400,8 +400,8 @@ class _ActivePill extends StatelessWidget {
     final slotWidth = capsuleWidth / itemCount;
     const vInset = _LiquidGlassTabBarState.pillInset;
 
-    return AnimatedBuilder(
-      animation: morphAnimation,
+    return ListenableBuilder(
+      listenable: morphAnimation,
       builder: (_, __) {
         // Morph expansion: pill grows wider during long press/scrub
         final morphExtra = morphAnimation.value * 6.0;
@@ -494,8 +494,8 @@ class _TabSlotState extends State<_TabSlot>
       },
       onTapCancel: () => _tapCtrl.reverse(),
       behavior: HitTestBehavior.opaque,
-      child: AnimatedBuilder(
-        animation: _tapCtrl,
+      child: ListenableBuilder(
+        listenable: _tapCtrl,
         builder: (_, child) => Transform.scale(
           scale: 1.0 - (_tapCtrl.value * 0.08),
           child: child,

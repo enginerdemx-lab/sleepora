@@ -66,7 +66,7 @@ class LocalizationService extends ChangeNotifier {
     'Free7Days': ['7 gün ücretsiz', '7 days free', '7 días gratis', '7 jours gratuits', '7 Tage kostenlos'],
     'After7Days': ['7 gün sonra', 'After 7 days', 'Después de 7 días', 'Après 7 jours', 'Nach 7 Tagen'],
     'CancelAnytime': ['Otomatik Yenileme, Her Zaman İptal Edilebilir', 'Auto-renew, cancel anytime', 'Renovación automática, cancela en cualquier momento', 'Renouvellement automatique, annulez à tout moment', 'Autom. Verlängerung, jederzeit kündbar'],
-    'LifetimeDesc': ['Tek seferlik ödeme — sonsuza kadar Premium', 'One-time payment — forever Premium', 'Pago único — Premium para siempre', 'Paiement unique — Premium pour toujours', 'Einmalige Zahlung — für immer Premium'],
+    'LifetimeDesc': ['Tek seferlik ödeme — sonsuza kadar Plus', 'One-time payment — forever Plus', 'Pago único — Plus para siempre', 'Paiement unique — Plus pour toujours', 'Einmalige Zahlung — für immer Plus'],
     'PremiumActive': ['Plus Aktif', 'Plus Active', 'Plus Activo', 'Plus Actif', 'Plus Aktiv'],
     'AllUnlocked': ['Tüm özellikler açık', 'All features unlocked', 'Todas las funciones desbloqueadas', 'Toutes les fonctions débloquées', 'Alle Funktionen freigeschaltet'],
     'NoActiveSub': ['Aktif abonelik bulunamadı', 'No active subscription found', 'No se encontró suscripción activa', 'Aucun abonnement actif trouvé', 'Kein aktives Abonnement gefunden'],
@@ -156,10 +156,10 @@ class LocalizationService extends ChangeNotifier {
 
     // ─── Buttons ───
     'BtnCancel': ['İptal', 'Cancel', 'Cancelar', 'Annuler', 'Abbrechen'],
-    'BtnGoPremium': ['Premium\'a Geç', 'Go Premium', 'Hazte Premium', 'Passer Premium', 'Premium werden'],
-    'PremiumSoundTitle': ['Premium Ses', 'Premium Sound', 'Sonido Premium', 'Son Premium', 'Premium Sound'],
-    'PremiumSoundDesc': ['Bu ses Premium üyelere özel. Premium\'a geçerek tüm seslerin keyfini çıkar!', 'This sound is exclusive to Premium members. Go Premium to enjoy all sounds!', 'Este sonido es exclusivo para miembros Premium. ¡Hazte Premium para disfrutar todos los sonidos!', 'Ce son est réservé aux membres Premium. Passez Premium pour profiter de tous les sons !', 'Dieser Sound ist exklusiv für Premium-Mitglieder. Werde Premium und genieße alle Sounds!'],
-    'FeatPremiumSounds': ['Premium Sesler', 'Premium Sounds', 'Sonidos Premium', 'Sons Premium', 'Premium Sounds'],
+    'BtnGoPremium': ['Plus\'a Geç', 'Go Plus', 'Hazte Plus', 'Passer Plus', 'Plus werden'],
+    'PremiumSoundTitle': ['Plus Ses', 'Plus Sound', 'Sonido Plus', 'Son Plus', 'Plus Sound'],
+    'PremiumSoundDesc': ['Bu ses Plus üyelere özel. Plus\'a geçerek tüm seslerin keyfini çıkar!', 'This sound is exclusive to Plus members. Go Plus to enjoy all sounds!', 'Este sonido es exclusivo para miembros Plus. ¡Hazte Plus para disfrutar todos los sonidos!', 'Ce son est réservé aux membres Plus. Passez Plus pour profiter de tous les sons !', 'Dieser Sound ist exklusiv für Plus-Mitglieder. Werde Plus und genieße alle Sounds!'],
+    'FeatPremiumSounds': ['Plus Sesler', 'Plus Sounds', 'Sonidos Plus', 'Sons Plus', 'Plus Sounds'],
     'BtnSave': ['Kaydet', 'Save', 'Guardar', 'Enregistrer', 'Speichern'],
     'BtnDone': ['Tamam', 'Done', 'Hecho', 'Terminé', 'Fertig'],
     'BtnDelete': ['Sil', 'Delete', 'Eliminar', 'Supprimer', 'Löschen'],
@@ -236,7 +236,7 @@ class LocalizationService extends ChangeNotifier {
     'BadgeBestValue': ['EN AVANTAJLI', 'BEST VALUE', 'MEJOR PRECIO', 'MEILLEUR PRIX', 'BESTER PREIS'],
     'RestorePurchases': ['Satın Alımları Geri Yükle', 'Restore Purchases', 'Restaurar compras', 'Restaurer les achats', 'Käufe wiederherstellen'],
     'RestoreNoActive': ['Aktif abonelik bulunamadı', 'No active subscription found', 'No se encontró suscripción activa', 'Aucun abonnement actif trouvé', 'Kein aktives Abonnement gefunden'],
-    'LifetimeInfo': ['Tek seferlik ödeme — sonsuza kadar Premium', 'One-time payment — forever Premium', 'Pago único — Premium para siempre', 'Paiement unique — Premium pour toujours', 'Einmalige Zahlung — für immer Premium'],
+    'LifetimeInfo': ['Tek seferlik ödeme — sonsuza kadar Plus', 'One-time payment — forever Plus', 'Pago único — Plus para siempre', 'Paiement unique — Plus pour toujours', 'Einmalige Zahlung — für immer Plus'],
     'TrialStarting': ['Bugünden itibaren', 'Starting today', 'A partir de hoy', 'À partir d\'aujourd\'hui', 'Ab heute'],
     'TrialDuration': ['7 gün ücretsiz', '7 days free', '7 días gratis', '7 jours gratuits', '7 Tage kostenlos'],
     'TrialAfter': ['7 gün sonra', 'After 7 days', 'Después de 7 días', 'Après 7 jours', 'Nach 7 Tagen'],
@@ -284,8 +284,70 @@ class LocalizationService extends ChangeNotifier {
     // ─── Recent Sounds ───
     'RecentSounds': ['Son Kullanılanlar', 'Recent Sounds', 'Sonidos recientes', 'Sons récents', 'Zuletzt verwendet'],
 
+    // ─── Login Screen ───
+    'LoginWelcome': ['Hoş Geldiniz', 'Welcome', 'Bienvenido', 'Bienvenue', 'Willkommen'],
+    'LoginSubtitle': ['Giriş yaparak verilerinizi yedekleyin ve\ncihazlar arası senkronize edin.', 'Sign in to back up your data and\nsync across devices.', 'Inicia sesión para respaldar tus datos\ny sincronizar entre dispositivos.', 'Connectez-vous pour sauvegarder vos données\net synchroniser entre appareils.', 'Melden Sie sich an, um Ihre Daten zu sichern\nund geräteübergreifend zu synchronisieren.'],
+    'LoginApple': ['Apple ile Giriş Yap', 'Sign in with Apple', 'Iniciar sesión con Apple', 'Se connecter avec Apple', 'Mit Apple anmelden'],
+    'LoginGoogle': ['Google ile Giriş Yap', 'Sign in with Google', 'Iniciar sesión con Google', 'Se connecter avec Google', 'Mit Google anmelden'],
+    'LoginGuest': ['Misafir olarak devam et', 'Continue as guest', 'Continuar como invitado', 'Continuer en tant qu\'invité', 'Als Gast fortfahren'],
+    'LoginOr': ['veya', 'or', 'o', 'ou', 'oder'],
+    'LoginPrivacy': ['Giriş yaparak Gizlilik Politikası\'nı kabul edersiniz.', 'By signing in you accept the Privacy Policy.', 'Al iniciar sesión acepta la Política de Privacidad.', 'En vous connectant, vous acceptez la Politique de confidentialité.', 'Mit der Anmeldung akzeptieren Sie die Datenschutzrichtlinie.'],
+    'LoginRequired': ['Bu özellik için giriş gereklidir', 'Sign in required for this feature', 'Se requiere inicio de sesión para esta función', 'Connexion requise pour cette fonctionnalité', 'Anmeldung für diese Funktion erforderlich'],
+    'LoginForPurchase': ['Satın alma işlemi için giriş yapmanız gerekmektedir.', 'You need to sign in to make a purchase.', 'Necesitas iniciar sesión para realizar una compra.', 'Vous devez vous connecter pour effectuer un achat.', 'Sie müssen sich anmelden, um einen Kauf zu tätigen.'],
+    'AccountTitle': ['Hesap', 'Account', 'Cuenta', 'Compte', 'Konto'],
+    'AccountSignedIn': ['ile giriş yapıldı', 'signed in with', 'inicio sesión con', 'connecté avec', 'angemeldet mit'],
+    'AccountSignOut': ['Çıkış Yap', 'Sign Out', 'Cerrar sesión', 'Se déconnecter', 'Abmelden'],
+    'AccountBackup': ['Verileri Yedekle', 'Back Up Data', 'Respaldar datos', 'Sauvegarder les données', 'Daten sichern'],
+    'AccountPrompt': ['Giriş yaparak verilerinizi yedekleyin ve cihazlar arası senkronize edin.', 'Sign in to back up your data and sync across devices.', 'Inicia sesión para respaldar tus datos y sincronizar.', 'Connectez-vous pour sauvegarder et synchroniser.', 'Anmelden zum Sichern und Synchronisieren.'],
+    'SignOutConfirmTitle': ['Çıkış Yap', 'Sign Out', 'Cerrar sesión', 'Se déconnecter', 'Abmelden'],
+    'SignOutConfirmMsg': ['Hesabınızdan çıkış yapmak istediğinize emin misiniz?', 'Are you sure you want to sign out?', '¿Estás seguro de que quieres cerrar sesión?', 'Êtes-vous sûr de vouloir vous déconnecter ?', 'Sind Sie sicher, dass Sie sich abmelden möchten?'],
+    'SignOutSuccess': ['Başarıyla çıkış yapıldı', 'Successfully signed out', 'Sesión cerrada correctamente', 'Déconnexion réussie', 'Erfolgreich abgemeldet'],
+
     // ─── Errors ───
     'ProductNotFound': ['Ürün bulunamadı. Lütfen daha sonra tekrar deneyin.', 'Product not found. Please try again later.', 'Producto no encontrado. Inténtalo más tarde.', 'Produit introuvable. Veuillez réessayer plus tard.', 'Produkt nicht gefunden. Bitte versuchen Sie es später erneut.'],
+
+    // ─── Login Gating ───
+    'LoginFavoriteMsg': ['Favorilerinizi kaydetmek için giriş yapın', 'Sign in to save your favorites', 'Inicia sesión para guardar tus favoritos', 'Connectez-vous pour enregistrer vos favoris', 'Melden Sie sich an, um Ihre Favoriten zu speichern'],
+    'LoginFavoriteDesc': ['Favori sesleriniz tüm cihazlarınızda senkronize edilir.', 'Your favorite sounds sync across all your devices.', 'Tus sonidos favoritos se sincronizan en todos tus dispositivos.', 'Vos sons favoris se synchronisent sur tous vos appareils.', 'Ihre Lieblingssounds werden auf allen Geräten synchronisiert.'],
+    'LoginSleepTrackMsg': ['Bebeğinizin uyku geçmişini takip etmek için giriş yapın', 'Sign in to track your baby\'s sleep history', 'Inicia sesión para seguir el historial de sueño de tu bebé', 'Connectez-vous pour suivre l\'historique de sommeil de votre bébé', 'Melden Sie sich an, um den Schlafverlauf Ihres Babys zu verfolgen'],
+    'LoginSleepTrackDesc': ['Uyku sürelerini ve alışkanlıklarını takip edin.', 'Track sleep durations and habits.', 'Sigue las duraciones y hábitos del sueño.', 'Suivez les durées et habitudes de sommeil.', 'Verfolgen Sie Schlafdauer und Gewohnheiten.'],
+    'SyncDevicesMsg': ['Telefonunuz ve tabletinizde aynı ayarlarla devam edin', 'Continue with the same settings on your phone and tablet', 'Continúa con los mismos ajustes en tu teléfono y tableta', 'Continuez avec les mêmes paramètres sur votre téléphone et tablette', 'Fahren Sie mit denselben Einstellungen auf Ihrem Telefon und Tablet fort'],
+    'SyncDevicesDesc': ['Tüm cihazlarınızda aynı favori sesler, ayarlar ve mix\'ler.', 'Same favorites, settings, and mixes across all devices.', 'Los mismos favoritos, ajustes y mezclas en todos los dispositivos.', 'Mêmes favoris, paramètres et mix sur tous les appareils.', 'Gleiche Favoriten, Einstellungen und Mixe auf allen Geräten.'],
+    'BtnSignIn': ['Giriş Yap', 'Sign In', 'Iniciar Sesión', 'Se Connecter', 'Anmelden'],
+    'BtnLater': ['Daha Sonra', 'Later', 'Más tarde', 'Plus tard', 'Später'],
+
+    // ─── Ad Düzenleme ───
+    'EditNameTitle': ['Adını Düzenle', 'Edit Name', 'Editar nombre', 'Modifier le nom', 'Namen bearbeiten'],
+    'EditNameHint': ['Yeni adını gir...', 'Enter new name...', 'Escribe tu nuevo nombre...', 'Entrez votre nouveau nom...', 'Neuen Namen eingeben...'],
+    'EditNameSuccess': ['Ad güncellendi ✓', 'Name updated ✓', 'Nombre actualizado ✓', 'Nom mis à jour ✓', 'Name aktualisiert ✓'],
+    'EditNameError': ['Güncelleme başarısız', 'Update failed', 'Error al actualizar', 'Échec de la mise à jour', 'Update fehlgeschlagen'],
+
+    // ─── Premium Preview ───
+    'PreviewBadge': ['ÖN İZLEME', 'PREVIEW', 'VISTA PREVIA', 'APERÇU', 'VORSCHAU'],
+    'PreviewEndTitle': ['Beğendiniz mi?', 'Did you like it?', '¿Te gustó?', 'Vous avez aimé ?', 'Hat es Ihnen gefallen?'],
+    'PreviewEndDesc': ['Bu sesin tamamını dinlemek için Plus\'a geçin.', 'Upgrade to Plus to listen to the full sound.', 'Mejora a Plus para escuchar el sonido completo.', 'Passez à Plus pour écouter le son en entier.', 'Upgrade auf Plus, um den vollständigen Sound zu hören.'],
+
+    // ─── Mixer Limit ───
+    'MixerLimitTitle': ['Karıştırıcı Sınırı', 'Mixer Limit', 'Límite del mezclador', 'Limite du mixeur', 'Mixer-Limit'],
+    'MixerLimitDesc': ['Ücretsiz sürümde en fazla 2 sesi karıştırabilirsiniz. Plus\'a geçerek sınırsız sesle mix yapın!', 'You can mix up to 2 sounds in the free version. Upgrade to Plus for unlimited mixing!', 'Puedes mezclar hasta 2 sonidos en la versión gratuita. ¡Mejora a Plus para mezclas ilimitadas!', 'Vous pouvez mélanger jusqu\'à 2 sons dans la version gratuite. Passez à Plus pour un mixage illimité !', 'In der kostenlosen Version können Sie bis zu 2 Sounds mischen. Upgrade auf Plus für unbegrenztes Mixen!'],
+    'MixerLimitHint': ['Yağmur + Beyaz Gürültü + Kalp Atışı gibi kombinasyonlar oluşturun!', 'Create combinations like Rain + White Noise + Heartbeat!', '¡Crea combinaciones como Lluvia + Ruido Blanco + Latido!', 'Créez des combinaisons comme Pluie + Bruit Blanc + Battement de cœur !', 'Erstellen Sie Kombinationen wie Regen + Weißes Rauschen + Herzschlag!'],
+
+    // ─── Sleep Stats ───
+    'SleepStatsTitle': ['Uyku İstatistikleri', 'Sleep Statistics', 'Estadísticas de sueño', 'Statistiques de sommeil', 'Schlafstatistiken'],
+    'SleepStatsDesc': ['Bebeğinizin uyku alışkanlıklarını takip edin', 'Track your baby\'s sleep habits', 'Sigue los hábitos de sueño de tu bebé', 'Suivez les habitudes de sommeil de votre bébé', 'Verfolgen Sie die Schlafgewohnheiten Ihres Babys'],
+
+    // ─── Sleep Stats Info Dialog ───
+    'StatsInfoTitle': ['İstatistikler Nasıl Çalışır?', 'How Do Statistics Work?', '¿Cómo funcionan las estadísticas?', 'Comment fonctionnent les statistiques ?', 'Wie funktionieren Statistiken?'],
+    'StatsInfoClose': ['Anladım', 'Got it', 'Entendido', 'Compris', 'Verstanden'],
+    'StatsInfoItem1Title': ['📊 7 Günlük Grafik', '📊 7-Day Chart', '📊 Gráfico de 7 días', '📊 Graphique 7 jours', '📊 7-Tage-Diagramm'],
+    'StatsInfoItem1Desc': ['Son 7 günün her biri için toplam uyku süresini gösterir. Barın yüksekliği o gün dinlenen süreye orantılıdır. Bugün ait bar parlak renkle gösterilir.', 'Shows total sleep time for each of the last 7 days. The bar height is proportional to the sleep duration that day. Today\'s bar is shown in a bright color.', 'Muestra el tiempo total de sueño de cada uno de los últimos 7 días. La altura de la barra es proporcional a la duración del sueño ese día. La barra de hoy se muestra en color brillante.', 'Affiche la durée totale de sommeil pour chacun des 7 derniers jours. La hauteur de la barre est proportionnelle à la durée de sommeil ce jour-là. La barre d\'aujourd\'hui est affichée en couleur vive.', 'Zeigt die gesamte Schlafdauer für jeden der letzten 7 Tage. Die Balkenhöhe ist proportional zur Schlafdauer an diesem Tag. Der heutige Balken wird in einer hellen Farbe angezeigt.'],
+    'StatsInfoItem2Title': ['🌙 Oturum Sayısı', '🌙 Session Count', '🌙 Número de sesiones', '🌙 Nombre de séances', '🌙 Sitzungsanzahl'],
+    'StatsInfoItem2Desc': ['Uygulamadan ses çaldığınızda otomatik olarak bir uyku oturumu başlar. Ses durdurulduğunda oturum kaydedilir. En az 1 dakika süren oturumlar istatistiklere eklenir.', 'A sleep session starts automatically when you play a sound from the app. The session is saved when the sound is stopped. Sessions lasting at least 1 minute are added to statistics.', 'Una sesión de sueño comienza automáticamente cuando reproduces un sonido desde la aplicación. La sesión se guarda cuando se detiene el sonido. Las sesiones de al menos 1 minuto se añaden a las estadísticas.', 'Une séance de sommeil démarre automatiquement lorsque vous lisez un son depuis l\'application. La séance est enregistrée à l\'arrêt du son. Les séances d\'au moins 1 minute sont ajoutées aux statistiques.', 'Eine Schlafsitzung beginnt automatisch, wenn Sie einen Sound aus der App abspielen. Die Sitzung wird beim Stoppen des Sounds gespeichert. Sitzungen von mindestens 1 Minute werden zur Statistik hinzugefügt.'],
+    'StatsInfoItem3Title': ['⏱️ Ortalama Süre', '⏱️ Average Duration', '⏱️ Duración media', '⏱️ Durée moyenne', '⏱️ Durchschnittsdauer'],
+    'StatsInfoItem3Desc': ['Son 7 günde dinlenen tüm oturumların dakika cinsinden ortalamasıdır. Bebeğinizin düzenli uyku örüntüsünü takip etmek için kullanışlıdır.', 'The average in minutes of all sessions listened to in the last 7 days. Useful for tracking your baby\'s regular sleep pattern.', 'La media en minutos de todas las sesiones escuchadas en los últimos 7 días. Útil para seguir el patrón de sueño regular de tu bebé.', 'La moyenne en minutes de toutes les séances écoutées au cours des 7 derniers jours. Utile pour suivre le schéma de sommeil régulier de votre bébé.', 'Der Durchschnitt in Minuten aller Sitzungen, die in den letzten 7 Tagen gehört wurden. Nützlich, um das regelmäßige Schlafmuster Ihres Babys zu verfolgen.'],
+    'StatsInfoItem4Title': ['🔥 Gün Serisi (Streak)', '🔥 Day Streak', '🔥 Racha de días', '🔥 Série de jours', '🔥 Tages-Serie'],
+    'StatsInfoItem4Desc': ['Üst üste uyku kaydı olan ardışık gün sayısını gösterir. Düzenli uyku rutinini ödüllendiren bir motivasyon ölçütüdür.', 'Shows the number of consecutive days with sleep records in a row. It is a motivational metric that rewards a regular sleep routine.', 'Muestra el número de días consecutivos con registros de sueño seguidos. Es una métrica motivacional que recompensa una rutina de sueño regular.', 'Indique le nombre de jours consécutifs avec des enregistrements de sommeil d\'affilée. C\'est une mesure de motivation qui récompense une routine de sommeil régulière.', 'Zeigt die Anzahl der aufeinanderfolgenden Tage mit Schlafaufzeichnungen hintereinander. Es ist eine Motivationskennzahl, die eine regelmäßige Schlafroutine belohnt.'],
+    'StatsInfoNote': ['💡 İstatistikler yalnızca giriş yapıldığında buluta kaydedilir. Misafir modunda veriler saklanmaz.', '💡 Statistics are only saved to the cloud when signed in. Data is not stored in guest mode.', '💡 Las estadísticas solo se guardan en la nube cuando estás conectado. Los datos no se almacenan en modo invitado.', '💡 Les statistiques ne sont sauvegardées dans le cloud que lorsque vous êtes connecté. Les données ne sont pas stockées en mode invité.', '💡 Statistiken werden nur in der Cloud gespeichert, wenn Sie angemeldet sind. Im Gastmodus werden keine Daten gespeichert.'],
 
     // ─── Sound Names ───
     'Sound_Pış Pış': ['Pış Pış', 'Shush Shush', 'Shh Shh', 'Chut Chut', 'Psch Psch'],
@@ -314,5 +376,25 @@ class LocalizationService extends ChangeNotifier {
     'Sound_Su Sesi': ['Su Sesi', 'Water Sound', 'Sonido de agua', 'Bruit d\'eau', 'Wassergeräusch'],
     'Sound_Çamaşır Makinesi': ['Çamaşır Makinesi', 'Washing Machine', 'Lavadora', 'Machine à laver', 'Waschmaschine'],
     'Sound_Trafik': ['Trafik', 'Traffic', 'Tráfico', 'Trafic', 'Verkehr'],
+
+    // ─── Uyku Takibi / Sleep Stats ───
+    'StatsWeekTitle': ['Son 7 Gün', 'Last 7 Days', 'Últimos 7 días', '7 derniers jours', 'Letzte 7 Tage'],
+    'StatsTotalTime': ['Toplam Süre', 'Total Time', 'Tiempo total', 'Temps total', 'Gesamtzeit'],
+    'StatsAvgDuration': ['Ortalama', 'Average', 'Promedio', 'Moyenne', 'Durchschnitt'],
+    'StatsSessionsCount': ['oturum', 'sessions', 'sesiones', 'séances', 'Sitzungen'],
+    'StatsNoData': ['Henüz uyku kaydı yok', 'No sleep records yet', 'Aún no hay registros', 'Aucun enregistrement', 'Noch keine Aufzeichnungen'],
+    'StatsMinLabel': ['dk', 'min', 'min', 'min', 'Min'],
+    'StatsHoursShort': ['sa', 'h', 'h', 'h', 'Std'],
+    'StatsLastSession': ['Son Oturum', 'Last Session', 'Última sesión', 'Dernière séance', 'Letzte Sitzung'],
+    'StatsStreak': ['Gün Serisi', 'Day Streak', 'Racha de días', 'Série de jours', 'Tages-Serie'],
+    'StatsLoading': ['Yükleniyor...', 'Loading...', 'Cargando...', 'Chargement...', 'Laden...'],
+    'StatsTonight': ['Bu Gece', 'Tonight', 'Esta noche', 'Ce soir', 'Heute Nacht'],
+    'StatsDayShort_0': ['Pzt', 'Mon', 'Lun', 'Lun', 'Mo'],
+    'StatsDayShort_1': ['Sal', 'Tue', 'Mar', 'Mar', 'Di'],
+    'StatsDayShort_2': ['Çar', 'Wed', 'Mie', 'Mer', 'Mi'],
+    'StatsDayShort_3': ['Per', 'Thu', 'Jue', 'Jeu', 'Do'],
+    'StatsDayShort_4': ['Cum', 'Fri', 'Vie', 'Ven', 'Fr'],
+    'StatsDayShort_5': ['Cmt', 'Sat', 'Sáb', 'Sam', 'Sa'],
+    'StatsDayShort_6': ['Paz', 'Sun', 'Dom', 'Dim', 'So'],
   };
 }

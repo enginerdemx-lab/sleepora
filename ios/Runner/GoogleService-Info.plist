@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CLIENT_ID</key>
+	<string>461986109206-por2v13868hqq5tqe0o3cgiaobepmbl3.apps.googleusercontent.com</string>
+	<key>REVERSED_CLIENT_ID</key>
+	<string>com.googleusercontent.apps.461986109206-por2v13868hqq5tqe0o3cgiaobepmbl3</string>
+	<key>API_KEY</key>
+	<string>AIzaSyDzN78BX_NBDjgTsl64wnTZrDdD9n3Dx-A</string>
+	<key>GCM_SENDER_ID</key>
+	<string>461986109206</string>
+	<key>PLIST_VERSION</key>
+	<string>1</string>
+	<key>BUNDLE_ID</key>
+	<string>com.enginerdem.sleepora</string>
+	<key>PROJECT_ID</key>
+	<string>sleepora-89902</string>
+	<key>STORAGE_BUCKET</key>
+	<string>sleepora-89902.firebasestorage.app</string>
+	<key>IS_ADS_ENABLED</key>
+	<false></false>
+	<key>IS_ANALYTICS_ENABLED</key>
+	<false></false>
+	<key>IS_APPINVITE_ENABLED</key>
+	<true></true>
+	<key>IS_GCM_ENABLED</key>
+	<true></true>
+	<key>IS_SIGNIN_ENABLED</key>
+	<true></true>
+	<key>GOOGLE_APP_ID</key>
+	<string>1:461986109206:ios:6094dd2d4efb626896a237</string>
+</dict>
+</plist>

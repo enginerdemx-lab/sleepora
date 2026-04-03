@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
 import '../screens/sounds_screen.dart';
+import '../services/localization_service.dart';
 
 class SoundCard extends StatefulWidget {
   final Sound sound;
@@ -8,6 +9,7 @@ class SoundCard extends StatefulWidget {
   final VoidCallback onFavorite;
   final VoidCallback? onLongPress;
   final bool isPremiumLocked;
+  final bool isPreviewPlaying;
 
   const SoundCard({
     super.key,
@@ -16,6 +18,7 @@ class SoundCard extends StatefulWidget {
     required this.onFavorite,
     this.onLongPress,
     this.isPremiumLocked = false,
+    this.isPreviewPlaying = false,
   });
 
   @override
@@ -28,6 +31,8 @@ class _SoundCardState extends State<SoundCard> with TickerProviderStateMixin {
   late AnimationController _tapController;
   late AnimationController _ringFadeController;
   late Animation<double> _tapScale;
+  late Animation<double> _ring1Anim;
+  late Animation<double> _ring2Anim;
 
   bool _wasPlaying = false; // Önceki çalma durumu takibi
 
@@ -35,19 +40,30 @@ class _SoundCardState extends State<SoundCard> with TickerProviderStateMixin {
   void initState() {
     super.initState();
 
+    // Daha uzun süre + easeInOut → pürüzsüz döngü
     _ring1Controller = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 1800),
+      duration: const Duration(milliseconds: 2600),
     );
 
     _ring2Controller = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 1800),
+      duration: const Duration(milliseconds: 3000),
+    );
+
+    // Smooth easeInOut eğrisiyle animasyon değerleri
+    _ring1Anim = CurvedAnimation(
+      parent: _ring1Controller,
+      curve: Curves.easeInOut,
+    );
+    _ring2Anim = CurvedAnimation(
+      parent: _ring2Controller,
+      curve: Curves.easeInOut,
     );
 
     _ringFadeController = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 600),
+      duration: const Duration(milliseconds: 700),
     );
 
     _tapController = AnimationController(
@@ -64,7 +80,7 @@ class _SoundCardState extends State<SoundCard> with TickerProviderStateMixin {
     if (_wasPlaying) {
       _ringFadeController.value = 1.0;
       _ring1Controller.repeat(reverse: true);
-      Future.delayed(const Duration(milliseconds: 600), () {
+      Future.delayed(const Duration(milliseconds: 800), () {
         if (mounted) _ring2Controller.repeat(reverse: true);
       });
     }
@@ -80,7 +96,7 @@ class _SoundCardState extends State<SoundCard> with TickerProviderStateMixin {
       // Çalmaya başladı — halkaları yavaşça aç
       _ringFadeController.forward();
       _ring1Controller.repeat(reverse: true);
-      Future.delayed(const Duration(milliseconds: 300), () {
+      Future.delayed(const Duration(milliseconds: 800), () {
         if (mounted) _ring2Controller.repeat(reverse: true);
       });
     } else if (!nowPlaying && _wasPlaying) {
@@ -120,8 +136,8 @@ class _SoundCardState extends State<SoundCard> with TickerProviderStateMixin {
       child: ListenableBuilder(
         listenable: Listenable.merge([_ring1Controller, _ring2Controller, _tapController, _ringFadeController]),
         builder: (context, _) {
-          final r1 = _ring1Controller.value;
-          final r2 = _ring2Controller.value;
+          final r1 = _ring1Anim.value;
+          final r2 = _ring2Anim.value;
           final ringFade = _ringFadeController.value;
           return Transform.scale(
             scale: _tapScale.value,
@@ -154,8 +170,33 @@ class _SoundCardState extends State<SoundCard> with TickerProviderStateMixin {
                 borderRadius: BorderRadius.circular(20),
                 child: Stack(
                   children: [
-                    // Premium elmas ikonu
-                    if (widget.isPremiumLocked)
+                    // Premium badge: Ön izleme veya elmas
+                    if (widget.isPreviewPlaying)
+                      Positioned(
+                        top: 8,
+                        left: 8,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                          decoration: BoxDecoration(
+                            gradient: const LinearGradient(
+                              colors: [Color(0xFFFF6B6B), Color(0xFFEE5A24)],
+                            ),
+                            borderRadius: BorderRadius.circular(8),
+                            boxShadow: [
+                              BoxShadow(color: const Color(0xFFFF6B6B).withValues(alpha: 0.4), blurRadius: 8, spreadRadius: -2),
+                            ],
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(Icons.play_circle_outline, color: Colors.white, size: 12),
+                              const SizedBox(width: 3),
+                              Text(LocalizationService().t('PreviewBadge'), style: const TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.w800, letterSpacing: 0.5)),
+                            ],
+                          ),
+                        ),
+                      )
+                    else if (widget.isPremiumLocked)
                       Positioned(
                         top: 10,
                         left: 10,
@@ -202,34 +243,34 @@ class _SoundCardState extends State<SoundCard> with TickerProviderStateMixin {
                             child: Stack(
                               alignment: Alignment.center,
                               children: [
-                                // Dış halka
+                                // Dış halka — daha soft, az hareket
                                 if (ringFade > 0)
                                   Opacity(
-                                    opacity: ringFade,
+                                    opacity: ringFade * 0.85,
                                     child: Transform.scale(
-                                      scale: 0.5 + ringFade * 0.5,
+                                      scale: 0.6 + ringFade * 0.4,
                                       child: Container(
-                                        width: 110 + r2 * 16,
-                                        height: 110 + r2 * 16,
+                                        width: 106 + r2 * 10,
+                                        height: 106 + r2 * 10,
                                         decoration: BoxDecoration(
                                           shape: BoxShape.circle,
-                                          color: Colors.white.withValues(alpha: (0.04 + r2 * 0.03).clamp(0.0, 1.0)),
+                                          color: Colors.white.withValues(alpha: (0.03 + r2 * 0.02).clamp(0.0, 1.0)),
                                         ),
                                       ),
                                     ),
                                   ),
-                                // İç halka
+                                // İç halka — daha soft
                                 if (ringFade > 0)
                                   Opacity(
-                                    opacity: ringFade,
+                                    opacity: ringFade * 0.9,
                                     child: Transform.scale(
-                                      scale: 0.6 + ringFade * 0.4,
+                                      scale: 0.65 + ringFade * 0.35,
                                       child: Container(
-                                        width: 82 + r1 * 14,
-                                        height: 82 + r1 * 14,
+                                        width: 80 + r1 * 10,
+                                        height: 80 + r1 * 10,
                                         decoration: BoxDecoration(
                                           shape: BoxShape.circle,
-                                          color: Colors.white.withValues(alpha: (0.07 + r1 * 0.04).clamp(0.0, 1.0)),
+                                          color: Colors.white.withValues(alpha: (0.055 + r1 * 0.03).clamp(0.0, 1.0)),
                                         ),
                                       ),
                                     ),
