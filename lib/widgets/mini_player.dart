@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'dart:ui';
 import '../theme/app_theme.dart';
 import '../screens/sounds_screen.dart';
@@ -44,6 +45,15 @@ class _MiniPlayerState extends State<MiniPlayer> with TickerProviderStateMixin {
   late AnimationController _pulseController;
   late Animation<Offset> _slideAnim;
   late Animation<double> _pulse;
+
+  // AirPlay / çıkış seçici kanalı
+  static const _airplayChannel = MethodChannel('com.sleepora/airplay');
+
+  Future<void> _showRoutePicker() async {
+    try {
+      await _airplayChannel.invokeMethod('showRoutePicker');
+    } catch (_) {}
+  }
 
   // Zamanlayıcı
   int? _timerMinutes;
@@ -328,7 +338,13 @@ class _MiniPlayerState extends State<MiniPlayer> with TickerProviderStateMixin {
                         shape: BoxShape.circle,
                         color: Colors.white.withValues(alpha: 0.15),
                       ),
-                      child: Icon(widget.sound!.icon, color: Colors.white, size: 14),
+                      child: widget.sound!.iconPath != null
+                          ? Padding(
+                              padding: const EdgeInsets.all(6),
+                              child: Image.asset(widget.sound!.iconPath!, fit: BoxFit.contain,
+                                  errorBuilder: (_, __, ___) => Icon(widget.sound!.icon, color: Colors.white, size: 14)),
+                            )
+                          : Icon(widget.sound!.icon, color: Colors.white, size: 14),
                     ),
                     const SizedBox(width: 8),
                     Expanded(
@@ -436,11 +452,17 @@ class _MiniPlayerState extends State<MiniPlayer> with TickerProviderStateMixin {
                               shape: BoxShape.circle,
                               color: Colors.white.withValues(alpha: 0.15),
                             ),
-                            child: Icon(
-                              widget.sound!.icon,
-                              color: Colors.white,
-                              size: 19,
-                            ),
+                            child: widget.sound!.iconPath != null
+                                ? Padding(
+                                    padding: const EdgeInsets.all(8),
+                                    child: Image.asset(widget.sound!.iconPath!, fit: BoxFit.contain,
+                                        errorBuilder: (_, __, ___) => Icon(widget.sound!.icon, color: Colors.white, size: 19)),
+                                  )
+                                : Icon(
+                                    widget.sound!.icon,
+                                    color: Colors.white,
+                                    size: 19,
+                                  ),
                           ),
                         ],
                       ),
@@ -473,6 +495,23 @@ class _MiniPlayerState extends State<MiniPlayer> with TickerProviderStateMixin {
                       ],
                     ),
                   ),
+                  // AirPlay / çıkış seçici — sadece mixer olmayan modda göster
+                  if (widget.onMixerVolume == null) ...[
+                    GestureDetector(
+                      onTap: _showRoutePicker,
+                      child: Container(
+                        width: 34,
+                        height: 34,
+                        decoration: const BoxDecoration(shape: BoxShape.circle),
+                        child: Icon(
+                          Icons.airplay_rounded,
+                          color: Colors.white.withValues(alpha: 0.6),
+                          size: 20,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 2),
+                  ],
                   // Mixer aksiyon butonları (varsa)
                   if (widget.onMixerVolume != null) ...[
                     _MiniActionBtn(icon: Icons.tune_rounded, color: Colors.white, onTap: widget.onMixerVolume!),

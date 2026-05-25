@@ -14,22 +14,32 @@ import 'paywall_screen.dart';
 import 'login_screen.dart';
 import '../services/localization_service.dart';
 import '../widgets/plus_dialog.dart';
+import '../widgets/unlock_button.dart';
 
 class Sound {
   final String name; // Dahili anahtar — değişmez (premium, favori, playCount için)
   final IconData icon;
+  // Özel PNG ikon (assets/images/icon/…). null ise [icon] (IconData) kullanılır.
+  final String? iconPath;
   final String assetPath;
+  // Kilit ekranı / Now Playing için ses başına artwork asset yolu.
+  // null ise SleepAudioHandler varsayılan logoyu gösterir.
+  final String? artworkPath;
   bool isFavorite;
   bool isPlaying;
   double volume;
+  final bool isRecord;
 
   Sound({
     required this.name,
     required this.icon,
+    this.iconPath,
     required this.assetPath,
+    this.artworkPath,
     this.isFavorite = false,
     this.isPlaying = false,
     this.volume = 0.5,
+    this.isRecord = false,
   });
 
   /// Dil ayarına göre çevrilmiş ses adı (Sound_ prefix'i kullanıcıya gösterilmez)
@@ -41,32 +51,32 @@ class Sound {
 }
 
 final List<Sound> allSounds = [
-  Sound(name: 'Pış Pış', icon: Icons.nightlight_round, assetPath: 'assets/sounds/Pis Pis Sesi.mp3'),
-  Sound(name: 'Eee Eee', icon: Icons.child_care, assetPath: 'assets/sounds/Eee Eee.mp3'),
-  Sound(name: 'Dandini', icon: Icons.nightlight_round, assetPath: 'assets/sounds/Dandini-Dandini-Dastana.mp3'),
-  Sound(name: 'Süpürge', icon: Icons.bolt, assetPath: 'assets/sounds/süpürge-sesi.mp3'),
-  Sound(name: 'Kolik', icon: Icons.child_care, assetPath: 'assets/sounds/Kolik.mp3'),           // premium
-  Sound(name: 'Kabin Sesi', icon: Icons.airplanemode_active, assetPath: 'assets/sounds/kabin-sesi.mp3'),
-  Sound(name: 'Uyusunda Büyüsün', icon: Icons.auto_awesome, assetPath: 'assets/sounds/uyusunda-büyüsün-nini.mp3'),
-  Sound(name: 'Yıldız Tozu', icon: Icons.star, assetPath: 'assets/sounds/Yildiz-Tozu-Ninnisi.mp3'), // premium
-  Sound(name: 'Pış Pış + Süpürge', icon: Icons.bolt, assetPath: 'assets/sounds/Pis-pis-ve-süpürge.mp3'),
-  Sound(name: 'Beyaz Gürültü', icon: Icons.layers, assetPath: 'assets/sounds/beyaz-gürültü.mp3'),
-  Sound(name: 'Konuşma', icon: Icons.record_voice_over, assetPath: 'assets/sounds/Konusma.mp3'), // premium
-  Sound(name: 'Yol Sesi', icon: Icons.directions_car, assetPath: 'assets/sounds/yol-sesi.mp3'),
-  Sound(name: 'Yağmur', icon: Icons.umbrella, assetPath: 'assets/sounds/yagmur.mp3'),
-  Sound(name: 'Saç Kurutma', icon: Icons.air, assetPath: 'assets/sounds/sac-kurutma.mp3'),
-  Sound(name: 'Pış Pış 2', icon: Icons.nightlight_round, assetPath: 'assets/sounds/Piş_piş2.mp3'), // premium
-  Sound(name: 'Rüzgar', icon: Icons.air, assetPath: 'assets/sounds/Rüzgar.mp3'),
-  Sound(name: 'Dalga', icon: Icons.water, assetPath: 'assets/sounds/Dalga.mp3'),
-  Sound(name: 'Duş', icon: Icons.shower, assetPath: 'assets/sounds/Dus.mp3'),
-  Sound(name: 'Helikopter', icon: Icons.flight, assetPath: 'assets/sounds/Helikopter.mp3'),
-  Sound(name: 'Tren', icon: Icons.train, assetPath: 'assets/sounds/Tren.mp3'),
-  Sound(name: 'Vantilatör', icon: Icons.toys_rounded, assetPath: 'assets/sounds/Vantilatör.mp3'),
-  Sound(name: 'Kalp Atışı', icon: Icons.favorite, assetPath: 'assets/sounds/kalp-atisi.mp3'),
-  Sound(name: 'Kuş Sesi', icon: Icons.park, assetPath: 'assets/sounds/kus-sesi.mp3'),
-  Sound(name: 'Su Sesi', icon: Icons.water_drop, assetPath: 'assets/sounds/su.mp3'),
-  Sound(name: 'Çamaşır Makinesi', icon: Icons.local_laundry_service, assetPath: 'assets/sounds/Camasir-mak.mp3'),
-  Sound(name: 'Trafik', icon: Icons.traffic, assetPath: 'assets/sounds/trafik.mp3'),
+  Sound(name: 'Pış Pış', icon: Icons.nightlight_round, iconPath: 'assets/images/icon/pispis.png', assetPath: 'assets/sounds/Pis Pis Sesi.mp3', artworkPath: 'assets/images/artwork/pis_pis.jpg'),
+  Sound(name: 'Eee Eee', icon: Icons.child_care, iconPath: 'assets/images/icon/eee.png', assetPath: 'assets/sounds/Eee Eee.mp3', artworkPath: 'assets/images/artwork/Eee_eee.jpg'),
+  Sound(name: 'Dandini', icon: Icons.nightlight_round, iconPath: 'assets/images/icon/dandini.png', assetPath: 'assets/sounds/Dandini-Dandini-Dastana.mp3', artworkPath: 'assets/images/artwork/Dandini.jpg'),
+  Sound(name: 'Süpürge', icon: Icons.bolt, iconPath: 'assets/images/icon/supurge.png', assetPath: 'assets/sounds/süpürge-sesi.mp3', artworkPath: 'assets/images/artwork/supurge.jpg'),
+  Sound(name: 'Kolik', icon: Icons.child_care, iconPath: 'assets/images/icon/kolik.png', assetPath: 'assets/sounds/Kolik.mp3', artworkPath: 'assets/images/artwork/Kolik.jpg'),           // premium
+  Sound(name: 'Kabin Sesi', icon: Icons.airplanemode_active, iconPath: 'assets/images/icon/kabin.png', assetPath: 'assets/sounds/kabin-sesi.mp3', artworkPath: 'assets/images/artwork/kabin.jpg'),
+  Sound(name: 'Uyusunda Büyüsün', icon: Icons.auto_awesome, iconPath: 'assets/images/icon/uyusundabuyusun.png', assetPath: 'assets/sounds/uyusunda-büyüsün-nini.mp3', artworkPath: 'assets/images/artwork/Uyusunda_Buyusun.jpg'),
+  Sound(name: 'Yıldız Tozu', icon: Icons.star, iconPath: 'assets/images/icon/yildiztozu.png', assetPath: 'assets/sounds/Yildiz-Tozu-Ninnisi.mp3', artworkPath: 'assets/images/artwork/Yildiz_Tozu.jpg'), // premium
+  Sound(name: 'Pış Pış + Süpürge', icon: Icons.bolt, iconPath: 'assets/images/icon/supurge_pispis.png', assetPath: 'assets/sounds/Pis-pis-ve-süpürge.mp3', artworkPath: 'assets/images/artwork/Pis_pis_supurge.jpg'),
+  Sound(name: 'Beyaz Gürültü', icon: Icons.layers, iconPath: 'assets/images/icon/beyaz_gurultu.png', assetPath: 'assets/sounds/beyaz-gürültü.mp3', artworkPath: 'assets/images/artwork/Beyaz_Gurultu.jpg'),
+  Sound(name: 'Konuşma', icon: Icons.record_voice_over, iconPath: 'assets/images/icon/konusma.png', assetPath: 'assets/sounds/Konusma.mp3', artworkPath: 'assets/images/artwork/Konusma.jpg'), // premium
+  Sound(name: 'Yol Sesi', icon: Icons.directions_car, iconPath: 'assets/images/icon/yol.png', assetPath: 'assets/sounds/yol-sesi.mp3', artworkPath: 'assets/images/artwork/Yol.jpg'),
+  Sound(name: 'Yağmur', icon: Icons.umbrella, iconPath: 'assets/images/icon/yagmur.png', assetPath: 'assets/sounds/yagmur.mp3', artworkPath: 'assets/images/artwork/Yagmur.jpg'),
+  Sound(name: 'Saç Kurutma', icon: Icons.air, iconPath: 'assets/images/icon/sackurutma.png', assetPath: 'assets/sounds/sac-kurutma.mp3', artworkPath: 'assets/images/artwork/Sac_Kurutma.jpg'),
+  Sound(name: 'Pış Pış 2', icon: Icons.nightlight_round, iconPath: 'assets/images/icon/pispis.png', assetPath: 'assets/sounds/Piş_piş2.mp3', artworkPath: 'assets/images/artwork/Pis_pis_2.jpg'), // premium
+  Sound(name: 'Rüzgar', icon: Icons.air, iconPath: 'assets/images/icon/ruzgar.png', assetPath: 'assets/sounds/Rüzgar.mp3', artworkPath: 'assets/images/artwork/ruzgar.jpg'),
+  Sound(name: 'Dalga', icon: Icons.water, iconPath: 'assets/images/icon/dalga.png', assetPath: 'assets/sounds/Dalga.mp3', artworkPath: 'assets/images/artwork/Dalga.jpg'),
+  Sound(name: 'Duş', icon: Icons.shower, iconPath: 'assets/images/icon/dus.png', assetPath: 'assets/sounds/Dus.mp3', artworkPath: 'assets/images/artwork/Dus.jpg'),
+  Sound(name: 'Helikopter', icon: Icons.flight, iconPath: 'assets/images/icon/helikopter.png', assetPath: 'assets/sounds/Helikopter.mp3', artworkPath: 'assets/images/artwork/Helikopter.jpg'),
+  Sound(name: 'Tren', icon: Icons.train, iconPath: 'assets/images/icon/tren.png', assetPath: 'assets/sounds/Tren.mp3', artworkPath: 'assets/images/artwork/Tren.jpg'),
+  Sound(name: 'Vantilatör', icon: Icons.toys_rounded, iconPath: 'assets/images/icon/vantilator.png', assetPath: 'assets/sounds/Vantilatör.mp3', artworkPath: 'assets/images/artwork/Vantilator.jpg'),
+  Sound(name: 'Kalp Atışı', icon: Icons.favorite, iconPath: 'assets/images/icon/kalp.png', assetPath: 'assets/sounds/kalp-atisi.mp3', artworkPath: 'assets/images/artwork/Kalp_Atisi.jpg'),
+  Sound(name: 'Kuş Sesi', icon: Icons.park, iconPath: 'assets/images/icon/kus.png', assetPath: 'assets/sounds/kus-sesi.mp3', artworkPath: 'assets/images/artwork/Kus_Sesi.jpg'),
+  Sound(name: 'Su Sesi', icon: Icons.water_drop, iconPath: 'assets/images/icon/su.png', assetPath: 'assets/sounds/su.mp3', artworkPath: 'assets/images/artwork/Su_Sesi.jpg'),
+  Sound(name: 'Çamaşır Makinesi', icon: Icons.local_laundry_service, iconPath: 'assets/images/icon/camasir_makinesi.png', assetPath: 'assets/sounds/Camasir-mak.mp3', artworkPath: 'assets/images/artwork/Camasir_makinesi.jpg'),
+  Sound(name: 'Trafik', icon: Icons.traffic, iconPath: 'assets/images/icon/trafik.png', assetPath: 'assets/sounds/trafik.mp3', artworkPath: 'assets/images/artwork/Trafik.jpg'),
 ];
 
 class SoundsScreen extends StatefulWidget {
@@ -103,6 +113,9 @@ class _SoundsScreenState extends State<SoundsScreen> with SingleTickerProviderSt
   @override
   void initState() {
     super.initState();
+    // IndexedStack içinde sabit instance olarak tutulduğumuz için
+    // dil değişikliğinde otomatik rebuild olmuyoruz — kendimiz listen ediyoruz.
+    _loc.addListener(_onLanguageChanged);
     _jiggleController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 250),
@@ -110,8 +123,13 @@ class _SoundsScreenState extends State<SoundsScreen> with SingleTickerProviderSt
     _loadPlayCounts();
   }
 
+  void _onLanguageChanged() {
+    if (mounted) setState(() {});
+  }
+
   @override
   void dispose() {
+    _loc.removeListener(_onLanguageChanged);
     _jiggleController.dispose();
     super.dispose();
   }
@@ -382,7 +400,30 @@ class _SoundsScreenState extends State<SoundsScreen> with SingleTickerProviderSt
                           style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold),
                           overflow: TextOverflow.ellipsis,
                         ),
-                        const Text('Sleepora', style: TextStyle(color: AppColors.grey, fontSize: 11)),
+                        Row(
+                          children: [
+                            const Text('Sleepora', style: TextStyle(color: AppColors.grey, fontSize: 11)),
+                            if (!_isEditing && !SubscriptionService().isPremium) ...[
+                              const SizedBox(width: 8),
+                              GestureDetector(
+                                onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const PaywallScreen())),
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                                  decoration: BoxDecoration(
+                                    gradient: const LinearGradient(
+                                      colors: [Color(0xFFA370F7), Color(0xFF7C3AED)],
+                                    ),
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  child: Text(
+                                    _loc.t('UpgradeToPlus'),
+                                    style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w700),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
                       ],
                     ),
                   ),

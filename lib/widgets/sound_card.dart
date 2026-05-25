@@ -283,11 +283,25 @@ class _SoundCardState extends State<SoundCard> with TickerProviderStateMixin {
                                     shape: BoxShape.circle,
                                     color: Colors.white.withValues(alpha: isPlaying ? 0.2 : 0.08),
                                   ),
-                                  child: Icon(
-                                    widget.sound.icon,
-                                    color: Colors.white,
-                                    size: 28,
-                                  ),
+                                  child: widget.sound.iconPath != null
+                                      ? Padding(
+                                          padding: const EdgeInsets.all(10),
+                                          child: Image.asset(
+                                            widget.sound.iconPath!,
+                                            fit: BoxFit.contain,
+                                            filterQuality: FilterQuality.high,
+                                            errorBuilder: (_, __, ___) => Icon(
+                                              widget.sound.icon,
+                                              color: Colors.white,
+                                              size: 28,
+                                            ),
+                                          ),
+                                        )
+                                      : Icon(
+                                          widget.sound.icon,
+                                          color: Colors.white,
+                                          size: 28,
+                                        ),
                                 ),
                               ],
                             ),

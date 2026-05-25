@@ -38,5 +38,11 @@ end
 post_install do |installer|
   installer.pods_project.targets.each do |target|
     flutter_additional_macos_build_settings(target)
+    # Pod'ların kendi MACOSX_DEPLOYMENT_TARGET'ları 10.11/10.12 → Xcode bunu
+    # desteklenen aralık (10.13+) dışında buluyor; build fail oluyor.
+    # Tüm pod target'larını projenin minimum hedefine (10.15) sabitle.
+    target.build_configurations.each do |config|
+      config.build_settings['MACOSX_DEPLOYMENT_TARGET'] = '10.15'
+    end
   end
 end

@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'auth_service.dart';
 import 'firestore_service.dart';
@@ -24,15 +25,21 @@ class SleepSession {
         'duration_minutes': durationMinutes,
         'sound_name': soundName,
         'date': date,
+        // Yerel saati ayrıca kaydet — UTC dönüşüm sorunlarını önlemek için
+        'local_hour': startTime.toLocal().hour,
       };
 
-  static SleepSession fromMap(Map<String, dynamic> map) => SleepSession(
-        startTime: DateTime.parse(map['start_time'] as String),
-        endTime: DateTime.parse(map['end_time'] as String),
-        durationMinutes: (map['duration_minutes'] as num).toInt(),
-        soundName: map['sound_name'] as String? ?? '',
-        date: map['date'] as String? ?? '',
-      );
+  static SleepSession fromMap(Map<String, dynamic> map) {
+    final parsed = DateTime.parse(map['start_time'] as String);
+    return SleepSession(
+      // Yerel zaman dilimine dönüştür — istatistiklerde doğru saat gösterimi için
+      startTime: parsed.toLocal(),
+      endTime: DateTime.parse(map['end_time'] as String).toLocal(),
+      durationMinutes: (map['duration_minutes'] as num).toInt(),
+      soundName: map['sound_name'] as String? ?? '',
+      date: map['date'] as String? ?? '',
+    );
+  }
 }
 
 // ─── 7 Günlük Özet ───
@@ -43,6 +50,20 @@ class WeeklyStats {
   final int avgMinutes;
   final int streakDays;
   final SleepSession? lastSession;
+  /// Oturumların genellikle başladığı saat (0-23). Yeterli veri yoksa null.
+  final int? preferredHour;
+  /// En çok kullanılan ses adı ve toplam süresi (dakika).
+  final String? topSoundName;
+  final int topSoundMinutes;
+  /// Bugün başlayan tüm uyutma oturumları (eski → yeni sıralı).
+  /// "Bugün bebeği kaç defa, hangi saatlerde uyuttunuz?" cevabını verir.
+  final List<SleepSession> todaySessions;
+  /// 24-bucket histogram: i. eleman = saatte başlayan oturum sayısı (0=00:00…23=23:00).
+  /// Hangi saatlerde sıkça uyutma yapıldığını gösteren saatlik ısı dağılımı.
+  final List<int> hourHistogram;
+  /// Gün → o güne ait oturumların listesi (drill-down için).
+  /// Anahtar formatı `YYYY-MM-DD`.
+  final Map<String, List<SleepSession>> sessionsByDay;
 
   WeeklyStats({
     required this.days,
@@ -51,6 +72,12 @@ class WeeklyStats {
     required this.avgMinutes,
     required this.streakDays,
     this.lastSession,
+    this.preferredHour,
+    this.topSoundName,
+    this.topSoundMinutes = 0,
+    this.todaySessions = const [],
+    this.hourHistogram = const [],
+    this.sessionsByDay = const {},
   });
 }
 
@@ -151,6 +178,9 @@ class SleepTrackingService {
         avgMinutes: 0,
         streakDays: 0,
         lastSession: null,
+        todaySessions: const [],
+        hourHistogram: List<int>.filled(24, 0),
+        sessionsByDay: const {},
       );
 
   List<DayStat> _buildEmptyDays() {
@@ -163,11 +193,16 @@ class SleepTrackingService {
 
   WeeklyStats _computeStats(List<SleepSession> sessions) {
     final today = DateTime.now();
+    final todayKey = _dateString(today);
 
     // Gün bazında grupla
     final Map<String, List<SleepSession>> byDay = {};
     for (final s in sessions) {
       byDay.putIfAbsent(s.date, () => []).add(s);
+    }
+    // Her gün içindeki oturumları başlangıç zamanına göre sırala
+    for (final list in byDay.values) {
+      list.sort((a, b) => a.startTime.compareTo(b.startTime));
     }
 
     // Son 7 gün listesi (Pzt - Paz yerine sıralı)
@@ -181,6 +216,17 @@ class SleepTrackingService {
         sessionCount: daySessions.length,
       );
     });
+
+    // Bugünkü uyutmalar (start time sıralı)
+    final todaySessions = List<SleepSession>.from(byDay[todayKey] ?? const [])
+      ..sort((a, b) => a.startTime.compareTo(b.startTime));
+
+    // 24-bucket saatlik histogram (haftanın tüm oturumları için)
+    final hourHistogram = List<int>.filled(24, 0);
+    for (final s in sessions) {
+      final h = s.startTime.toLocal().hour.clamp(0, 23);
+      hourHistogram[h] = hourHistogram[h] + 1;
+    }
 
     final totalMinutes = sessions.fold(0, (sum, s) => sum + s.durationMinutes);
     final sessionCount = sessions.length;
@@ -199,6 +245,40 @@ class SleepTrackingService {
     // Son oturum
     final lastSession = sessions.isNotEmpty ? sessions.last : null;
 
+    // Tercih edilen saat: gece yarısı geçişini doğru ele almak için dairesel ortalama.
+    // .toLocal() ile her zaman yerel saat kullanılır — UTC karışıklığını önler.
+    int? preferredHour;
+    if (sessions.length >= 2) {
+      double sinSum = 0;
+      double cosSum = 0;
+      for (final s in sessions) {
+        // Dakikaları da dahil et — daha hassas sonuç
+        final localTime = s.startTime.toLocal();
+        final hourFraction = localTime.hour + localTime.minute / 60.0;
+        final angle = 2 * math.pi * hourFraction / 24;
+        sinSum += math.sin(angle);
+        cosSum += math.cos(angle);
+      }
+      final avgAngle = math.atan2(sinSum / sessions.length, cosSum / sessions.length);
+      final rawHour = (avgAngle / (2 * math.pi) * 24).round() % 24;
+      preferredHour = rawHour < 0 ? rawHour + 24 : rawHour;
+    }
+
+    // En çok kullanılan ses (toplam dakikaya göre)
+    String? topSoundName;
+    int topSoundMinutes = 0;
+    if (sessions.isNotEmpty) {
+      final Map<String, int> minutesBySound = {};
+      for (final s in sessions) {
+        minutesBySound[s.soundName] =
+            (minutesBySound[s.soundName] ?? 0) + s.durationMinutes;
+      }
+      final topEntry = minutesBySound.entries
+          .reduce((a, b) => a.value >= b.value ? a : b);
+      topSoundName = topEntry.key;
+      topSoundMinutes = topEntry.value;
+    }
+
     return WeeklyStats(
       days: days,
       totalMinutes: totalMinutes,
@@ -206,6 +286,12 @@ class SleepTrackingService {
       avgMinutes: avgMinutes,
       streakDays: streak,
       lastSession: lastSession,
+      preferredHour: preferredHour,
+      topSoundName: topSoundName,
+      topSoundMinutes: topSoundMinutes,
+      todaySessions: todaySessions,
+      hourHistogram: hourHistogram,
+      sessionsByDay: byDay,
     );
   }
 }

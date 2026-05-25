@@ -39,5 +39,13 @@ end
 post_install do |installer|
   installer.pods_project.targets.each do |target|
     flutter_additional_ios_build_settings(target)
+    # Bazı Pod'lar (Firebase bağımlılıkları, GTMAppAuth vb.) 9.0/10.0 gibi
+    # düşük deployment target ile geliyor; Xcode bunu bizim 15.0 hedefimizle
+    # uyumsuz buluyor → uyarı/hata. Tüm pod target'larını 15.0'a sabitle.
+    target.build_configurations.each do |config|
+      config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '15.0'
+      # Excluded archs — Apple Silicon simülatöründe x86_64 derlenmesin
+      config.build_settings['EXCLUDED_ARCHS[sdk=iphonesimulator*]'] = 'i386'
+    end
   end
 end

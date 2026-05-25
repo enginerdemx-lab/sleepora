@@ -1,6 +1,7 @@
 import Flutter
 import UIKit
 import AVFoundation
+import AVKit
 
 @main
 @objc class AppDelegate: FlutterAppDelegate {
@@ -38,6 +39,36 @@ import AVFoundation
       case "stopRecording":
         self.stopRecording(result: result)
       default:
+        result(FlutterMethodNotImplemented)
+      }
+    }
+
+    // ─── AirPlay / Çıkış Seçici Kanalı ───
+    let airplayChannel = FlutterMethodChannel(
+      name: "com.sleepora/airplay",
+      binaryMessenger: controller.binaryMessenger
+    )
+    airplayChannel.setMethodCallHandler { (call, result) in
+      if call.method == "showRoutePicker" {
+        DispatchQueue.main.async {
+          let routePicker = AVRoutePickerView(frame: CGRect(x: -200, y: -200, width: 1, height: 1))
+          if let rootVC = UIApplication.shared.windows.first?.rootViewController {
+            rootVC.view.addSubview(routePicker)
+          }
+          // AVRoutePickerView içindeki butona programatik dokunuş
+          for subview in routePicker.subviews {
+            if let button = subview as? UIButton {
+              button.sendActions(for: .touchUpInside)
+              break
+            }
+          }
+          // Kısa gecikme sonra temizle
+          DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+            routePicker.removeFromSuperview()
+          }
+          result(true)
+        }
+      } else {
         result(FlutterMethodNotImplemented)
       }
     }

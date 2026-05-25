@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="tr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, viewport-fit=cover" />
+    <title>Gizlilik Politikası | Sleepora</title>
+    <meta name="description" content="Sleepora gizlilik politikası — hangi verileri topluyoruz, nasıl kullanıyoruz, kimlerle paylaşıyoruz." />
+    <meta name="theme-color" content="#08051a" />
+    <link rel="icon" href="./assets/logo.jpg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="./styles.css" />
+    <style>
+      /* Privacy/legal sayfalarında özel JS kursörü yok; sistem mouse'u görünür kalsın */
+      html, body { cursor: auto !important; }
+      a, button, .back-link { cursor: pointer !important; }
+
+      .legal-wrap {
+        max-width: 880px;
+        margin: 0 auto;
+        padding: 96px 24px 96px;
+        position: relative;
+        z-index: 2;
+      }
+      .legal-wrap .back-link {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        color: rgba(255, 255, 255, 0.7);
+        text-decoration: none;
+        font-weight: 500;
+        margin-bottom: 32px;
+        font-family: "Plus Jakarta Sans", system-ui, sans-serif;
+      }
+      .legal-wrap .back-link:hover { color: #fff; }
+      .legal-wrap h1 {
+        font-family: "Outfit", system-ui, sans-serif;
+        font-size: clamp(32px, 5vw, 48px);
+        font-weight: 700;
+        line-height: 1.15;
+        margin: 0 0 12px;
+        color: #fff;
+      }
+      .legal-wrap .meta {
+        color: rgba(255, 255, 255, 0.6);
+        font-size: 14px;
+        margin-bottom: 40px;
+        font-family: "Plus Jakarta Sans", system-ui, sans-serif;
+      }
+      .legal-wrap h2 {
+        font-family: "Outfit", system-ui, sans-serif;
+        font-size: 22px;
+        font-weight: 700;
+        color: #fff;
+        margin: 40px 0 12px;
+      }
+      .legal-wrap h3 {
+        font-family: "Outfit", system-ui, sans-serif;
+        font-size: 17px;
+        font-weight: 600;
+        color: rgba(255, 255, 255, 0.92);
+        margin: 24px 0 8px;
+      }
+      .legal-wrap p,
+      .legal-wrap li {
+        font-family: "Plus Jakarta Sans", system-ui, sans-serif;
+        color: rgba(255, 255, 255, 0.78);
+        font-size: 15.5px;
+        line-height: 1.75;
+      }
+      .legal-wrap ul {
+        margin: 8px 0 16px;
+        padding-left: 22px;
+      }
+      .legal-wrap li { margin-bottom: 6px; }
+      .legal-wrap a {
+        color: #c8a8ff;
+        text-decoration: underline;
+        text-underline-offset: 3px;
+      }
+      .legal-wrap a:hover { color: #fff; }
+      .legal-wrap .card {
+        background: rgba(255, 255, 255, 0.04);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 18px;
+        padding: 20px 22px;
+        margin: 20px 0;
+      }
+      .legal-wrap .card p:last-child { margin-bottom: 0; }
+      .legal-wrap .tag {
+        display: inline-block;
+        font-family: "Plus Jakarta Sans", system-ui, sans-serif;
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: #c8a8ff;
+        padding: 6px 12px;
+        border: 1px solid rgba(200, 168, 255, 0.35);
+        border-radius: 999px;
+        margin-bottom: 18px;
+      }
+      .legal-wrap .footer-mini {
+        margin-top: 64px;
+        padding-top: 24px;
+        border-top: 1px solid rgba(255, 255, 255, 0.08);
+        font-size: 13px;
+        color: rgba(255, 255, 255, 0.55);
+      }
+    </style>
+  </head>
+  <body data-theme="night" data-anim="high">
+    <!-- Background layers -->
+    <div class="bg-stack">
+      <div class="bg-gradient"></div>
+      <canvas id="starfield"></canvas>
+      <div class="bg-moon"></div>
+      <div class="bg-blob b1"></div>
+      <div class="bg-blob b2"></div>
+      <div class="bg-blob b3"></div>
+    </div>
+    <div class="noise"></div>
+
+    <main class="legal-wrap">
+      <a class="back-link" href="./index.html">← Ana sayfaya dön</a>
+      <span class="tag">Gizlilik Politikası</span>
+      <h1>Verilerin güvende, gizliliğin önemli.</h1>
+      <p class="meta">Son güncelleme: 18 Mayıs 2026 · Yürürlük: 18 Mayıs 2026</p>
+
+      <div class="card">
+        <p>
+          Sleepora ("uygulama", "biz", "Sleepora") olarak gizliliğine önem veriyoruz. Bu politika,
+          Sleepora mobil uygulamasını ve <a href="https://sleepora.app">sleepora.app</a> sitesini kullandığında
+          hangi verileri topladığımızı, nasıl kullandığımızı, kimlerle paylaştığımızı ve haklarını açıklar.
+        </p>
+      </div>
+
+      <h2>1. Veri Sorumlusu</h2>
+      <p>
+        Bu politika kapsamında veri sorumlusu Sleepora geliştiricisidir. İletişim için:
+        <a href="mailto:destek@sleepora.app">destek@sleepora.app</a>.
+      </p>
+
+      <h2>2. Topladığımız Veriler</h2>
+      <p>
+        Sleepora, çekirdek özellikleri (white noise, ninni, rahatlatıcı sesler, zamanlayıcı, mini oyunlar)
+        için <strong>hesap açmanı zorunlu kılmaz</strong>. Aşağıdaki veriler yalnızca ilgili özelliği kullanmayı
+        seçtiğin durumlarda toplanır.
+      </p>
+
+      <h3>2.1 Hesap Bilgileri (Opsiyonel)</h3>
+      <p>
+        "Sign in with Apple" veya "Google ile Giriş" ile uygulamada oturum açmayı seçtiğinde, sağlayıcıdan
+        alınan şu bilgiler Firebase Authentication üzerinde saklanır:
+      </p>
+      <ul>
+        <li>E-posta adresi</li>
+        <li>Görünen ad (display name)</li>
+        <li>Profil fotoğrafı URL'i (yalnızca Google girişinde)</li>
+        <li>Sağlayıcı kullanıcı kimliği (Apple/Google tarafından üretilen anonim ID)</li>
+      </ul>
+      <p>
+        Şifre, parmak izi, Apple/Google hesap şifren <strong>bize hiçbir zaman gönderilmez</strong>. Apple ve
+        Google'ın güvenli OAuth akışları kullanılır.
+      </p>
+
+      <h3>2.2 Uygulama İçi Tercihler ve İçerik</h3>
+      <p>
+        Giriş yaptığında, deneyimini cihazlar arası senkronize etmek için Cloud Firestore'da şu veriler
+        saklanır:
+      </p>
+      <ul>
+        <li>Bebek için verdiğin ad (yalnızca sen girersen)</li>
+        <li>Favori sesler listesi</li>
+        <li>Kaydedilmiş ses karışımları (mix'ler)</li>
+        <li>Uyku oturumu kayıtları (başlangıç saati, süre, çalınan ses)</li>
+        <li>Toplam dinleme süresi ve oturum sayısı</li>
+        <li>Dil, otomatik durdurma, fade-out, bildirim tercihleri</li>
+        <li>Mini oyun skorların (lider tablosu için)</li>
+        <li>Premium abonelik durumu ve süresi</li>
+      </ul>
+
+      <h3>2.3 Cihaz ve Tanılama Verileri</h3>
+      <p>
+        Uygulamanın istikrarlı çalışması ve hata ayıklama için, gizlilik dostu biçimde aşağıdaki anonim
+        veriler Firebase üzerinden toplanabilir:
+      </p>
+      <ul>
+        <li>Cihaz modeli, işletim sistemi sürümü</li>
+        <li>Uygulama sürümü, dil, ülke</li>
+        <li>Çökme (crash) ve performans logları</li>
+        <li>Kullanılan ekran/özellik istatistikleri (kişisel olmayan, toplu)</li>
+      </ul>
+
+      <h3>2.4 Reklam Verileri</h3>
+      <p>
+        Ücretsiz kullanımda Google AdMob aracılığıyla reklam gösterilir. Bu kapsamda toplanabilecek veriler:
+      </p>
+      <ul>
+        <li>Reklam Tanımlayıcısı (iOS'ta IDFA / Android'de AAID)</li>
+        <li>Reklam etkileşim olayları (görüntüleme, tıklama)</li>
+        <li>Yaklaşık cihaz türü ve dil</li>
+      </ul>
+      <p>
+        iOS'ta reklam takibi için <strong>App Tracking Transparency (ATT)</strong> izin diyaloğu gösterilir.
+        İzin vermezsen, kişiselleştirilmemiş (genel) reklamlar gösterilir; bu durumda reklam tanımlayıcı
+        takip amaçlı kullanılmaz.
+      </p>
+
+      <h3>2.5 Satın Alma Bilgileri</h3>
+      <p>
+        Premium abonelik için satın alma işlemleri <strong>tamamen Apple App Store / Google Play Store
+        üzerinden</strong> yürütülür. Kredi kartı, banka veya ödeme bilgilerini biz toplamayız ve
+        görmeyiz. Yalnızca platformun sağladığı işlem kimliği (transaction ID) ve abonelik durumu
+        hesabınla eşleştirilir.
+      </p>
+
+      <h3>2.6 Yerel Veriler (Cihazında Kalır)</h3>
+      <p>
+        Bazı veriler yalnızca cihazında saklanır ve hiçbir sunucuya gönderilmez:
+      </p>
+      <ul>
+        <li>Tema/görsel tercihleri</li>
+        <li>Yerel bildirim ayarları</li>
+        <li>Misafir kullanımda favoriler (giriş yapana kadar)</li>
+      </ul>
+
+      <h2>3. Verileri Neden Kullanıyoruz</h2>
+      <ul>
+        <li>Uygulamanın temel işlevlerini sağlamak (ses çalma, mix kaydetme, zamanlayıcı)</li>
+        <li>Hesap güvenliğini ve oturum yönetimini sürdürmek</li>
+        <li>Tercihlerini cihazlar arası senkronize etmek</li>
+        <li>Uygulamayı geliştirmek, hataları gidermek</li>
+        <li>Reklam göstermek (yalnızca ücretsiz kullanımda)</li>
+        <li>Yasal yükümlülüklere uymak</li>
+      </ul>
+
+      <h2>4. Üçüncü Taraflarla Paylaşım</h2>
+      <p>Verilerini aşağıdaki güvenilir hizmet sağlayıcılar ile, yalnızca hizmetin gerektirdiği ölçüde paylaşırız:</p>
+      <ul>
+        <li>
+          <strong>Google (Firebase Authentication, Cloud Firestore, Crashlytics, Analytics):</strong>
+          hesap, içerik ve tanılama verilerinin barındırılması.
+          <a href="https://firebase.google.com/support/privacy" target="_blank" rel="noopener">Firebase Gizlilik</a>
+        </li>
+        <li>
+          <strong>Google AdMob:</strong> reklam gösterimi ve raporlama.
+          <a href="https://policies.google.com/technologies/ads" target="_blank" rel="noopener">AdMob Gizlilik</a>
+        </li>
+        <li>
+          <strong>Apple:</strong> Sign in with Apple ve App Store satın alma işlemleri.
+          <a href="https://www.apple.com/legal/privacy/" target="_blank" rel="noopener">Apple Gizlilik</a>
+        </li>
+      </ul>
+      <p>
+        Verilerini <strong>asla satmıyoruz</strong>, pazarlama amacıyla üçüncü taraflara kiralamıyoruz veya
+        izinsiz olarak aktarmıyoruz.
+      </p>
+
+      <h2>5. Veri Saklama ve Silme</h2>
+      <p>
+        Hesap verilerini, hesabın aktif olduğu sürece tutarız. Hesabını silmek istersen
+        <a href="mailto:destek@sleepora.app">destek@sleepora.app</a> adresine yazman yeterlidir; talebin alındıktan
+        sonra makul süre içinde (en geç 30 gün) tüm kişisel verilerin Firebase'den silinir. Yasal saklama
+        yükümlülüğü olan veriler (örneğin satın alma işlem kayıtları) gerekli süre kadar saklanır.
+      </p>
+
+      <h2>6. Çocukların Gizliliği</h2>
+      <p>
+        Sleepora bebekler ve çocuklar için ses içeriği sunsa da, uygulamayı <strong>ebeveynler ve bakım
+        verenler</strong> kullanır ve hesap açar. 13 yaşın altındaki çocuklardan bilerek kişisel veri
+        toplamayız. Çocuğunuza ait bir veriyi sehven topladığımızı düşünüyorsanız lütfen bizimle iletişime
+        geçin, derhal silelim.
+      </p>
+
+      <h2>7. Hakların</h2>
+      <p>
+        KVKK (Türkiye) ve GDPR (AB) kapsamında şu haklara sahipsin:
+      </p>
+      <ul>
+        <li>Hangi verilerinin tutulduğunu öğrenme</li>
+        <li>Verilerin bir kopyasını isteme</li>
+        <li>Yanlış verilerin düzeltilmesini talep etme</li>
+        <li>Verilerinin silinmesini talep etme ("unutulma hakkı")</li>
+        <li>Veri işleme iznini geri çekme</li>
+        <li>İlgili veri koruma kurumuna şikayette bulunma</li>
+      </ul>
+      <p>
+        Bu haklarını kullanmak için: <a href="mailto:destek@sleepora.app">destek@sleepora.app</a>
+      </p>
+
+      <h2>8. Güvenlik</h2>
+      <p>
+        Verileri korumak için sektör standardı önlemler kullanırız: TLS/HTTPS şifrelemesi, Firebase güvenlik
+        kuralları, sınırlı erişim, düzenli yedekleme. Yine de internet üzerinden hiçbir aktarımın %100 güvenli
+        olmadığını biliyor ve sürekli iyileştiriyoruz.
+      </p>
+
+      <h2>9. Politikadaki Değişiklikler</h2>
+      <p>
+        Bu politikayı zaman zaman güncelleyebiliriz. Önemli değişikliklerde uygulama içi bildirim veya
+        e-posta ile haber veririz. En güncel sürüm her zaman bu sayfada bulunur ve üst kısımda "Son
+        güncelleme" tarihiyle işaretlenir.
+      </p>
+
+      <h2>10. İletişim</h2>
+      <p>
+        Gizlilik ile ilgili soru, talep veya endişelerin için bize ulaş:
+      </p>
+      <ul>
+        <li>E-posta: <a href="mailto:destek@sleepora.app">destek@sleepora.app</a></li>
+        <li>Site: <a href="https://sleepora.app">sleepora.app</a></li>
+      </ul>
+
+      <p class="footer-mini">
+        © 2026 Sleepora. Tüm hakları saklıdır.
+      </p>
+    </main>
+
+    <script src="./script.js" defer></script>
+  </body>
+</html>

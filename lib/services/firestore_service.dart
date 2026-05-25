@@ -486,4 +486,88 @@ class FirestoreService {
       await batch.commit();
     } while (snapshot.docs.length == batchSize);
   }
+
+  // ═══════════════════════════════════════════════════════
+  // Skor Tablosu (Leaderboard)
+  // ═══════════════════════════════════════════════════════
+
+  /// Leaderboard koleksiyon referansı.
+  /// Yapı: leaderboards/{gameId}/scores/{uid}
+  CollectionReference<Map<String, dynamic>> _scoresRef(String gameId) =>
+      _db.collection('leaderboards').doc(gameId).collection('scores');
+
+  /// Kullanıcının skorunu gönderir.
+  /// Eğer mevcut skoru daha iyiyse güncelleme yapılmaz.
+  ///
+  /// [gameId]: 'minesweeper', '2048', 'quiz'
+  /// [higherIsBetter]: true → yüksek skor daha iyi (2048, quiz)
+  ///                   false → düşük skor daha iyi (minesweeper süre)
+  Future<bool> submitScore({
+    required String gameId,
+    required String uid,
+    required String displayName,
+    required int score,
+    bool higherIsBetter = true,
+  }) async {
+    final docRef = _scoresRef(gameId).doc(uid);
+    bool isNewBest = true;
+
+    try {
+      final existing = await docRef.get();
+      if (existing.exists) {
+        final oldScore = existing.data()?['score'] as int? ?? 0;
+        if (higherIsBetter) {
+          isNewBest = score > oldScore;
+        } else {
+          isNewBest = score < oldScore;
+        }
+      }
+    } catch (e) {
+      // Okuma izni yoksa veya bağlantı koptuysa hata verir.
+      // Bu durumda skoru Firestore'a her halükarda yazmayı denemeliyiz.
+      debugPrint('⚠️ Firestore submitScore okuma uyarısı: $e');
+    }
+
+    if (isNewBest) {
+      // SetOptions(merge: true) ile varsa sadece güncelliyoruz.
+      await docRef.set({
+        'uid': uid,
+        'display_name': displayName.isNotEmpty ? displayName : 'Anonim',
+        'score': score,
+        'updated_at': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+      debugPrint('🏆 Leaderboard: Yeni en iyi skor → $gameId: $score');
+    }
+
+    return isNewBest;
+  }
+
+  /// Skor tablosunu getirir (en iyi N skor).
+  ///
+  /// [higherIsBetter]: true → azalan sıra, false → artan sıra
+  Future<List<Map<String, dynamic>>> getLeaderboard(
+    String gameId, {
+    int limit = 50,
+    bool higherIsBetter = true,
+  }) async {
+    // Hataları yukarı fırlat — LeaderboardService loglar
+    final snapshot = await _scoresRef(gameId)
+        .orderBy('score', descending: higherIsBetter)
+        .limit(limit)
+        .get();
+
+    return snapshot.docs.asMap().entries.map((entry) {
+      final raw = entry.value.data();
+      // Rank'i yeni map'e ekle — mevcut map'i mutate etme
+      return <String, dynamic>{...raw, 'rank': entry.key + 1};
+    }).toList();
+  }
+
+  /// Kullanıcının belirli bir oyundaki en iyi skorunu getirir.
+  /// Hataları yukarı fırlatır — çağıran handle eder.
+  Future<int?> getUserBestScore(String gameId, String uid) async {
+    final doc = await _scoresRef(gameId).doc(uid).get();
+    if (!doc.exists) return null;
+    return doc.data()?['score'] as int?;
+  }
 }

@@ -10,6 +10,7 @@ import '../services/localization_service.dart';
 import '../services/subscription_service.dart';
 import '../services/auth_service.dart';
 import '../widgets/plus_dialog.dart';
+import '../widgets/unlock_button.dart';
 
 typedef MixerChangedCallback = void Function(List<Sound> selected, VoidCallback? onClear, VoidCallback? onVolume, VoidCallback? onSave);
 typedef VolumeChangeCallback = void Function(int index, double volume);
@@ -64,6 +65,8 @@ class FavoritesScreenState extends State<FavoritesScreen> with SingleTickerProvi
   @override
   void initState() {
     super.initState();
+    // IndexedStack içinde sabit instance — dil değişimi için kendimiz listen ediyoruz.
+    _loc.addListener(_onLanguageChanged);
     _tabController = TabController(length: 3, vsync: this);
     _tabController.animation?.addListener(_onTabAnimation);
   }
@@ -75,8 +78,13 @@ class FavoritesScreenState extends State<FavoritesScreen> with SingleTickerProvi
     }
   }
 
+  void _onLanguageChanged() {
+    if (mounted) setState(() {});
+  }
+
   @override
   void dispose() {
+    _loc.removeListener(_onLanguageChanged);
     _tabController.animation?.removeListener(_onTabAnimation);
     _tabController.dispose();
     super.dispose();
@@ -115,16 +123,33 @@ class FavoritesScreenState extends State<FavoritesScreen> with SingleTickerProvi
         bottom: false,
         child: Column(children: [
           const SizedBox(height: 16),
+          // ─── Tab bar + sağ köşede Plus'a Geç butonu ───
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Container(
-              height: 48,
-              decoration: BoxDecoration(color: const Color(0xFF1A1025), borderRadius: BorderRadius.circular(24), border: Border.all(color: Colors.white.withValues(alpha:0.06))),
-              child: Row(children: [
-                _TabItem(label: _loc.t('TabFavorite'), index: 0, selected: _selectedTab, onTap: (i) => _tabController.animateTo(i)),
-                _TabItem(label: _loc.t('TabMyMixes'), index: 1, selected: _selectedTab, onTap: (i) => _tabController.animateTo(i)),
-                _TabItem(label: _loc.t('TabMixer'), index: 2, selected: _selectedTab, onTap: (i) => _tabController.animateTo(i)),
-              ]),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Container(
+                    height: 48,
+                    decoration: BoxDecoration(color: const Color(0xFF1A1025), borderRadius: BorderRadius.circular(24), border: Border.all(color: Colors.white.withValues(alpha:0.06))),
+                    child: Row(children: [
+                      _TabItem(label: _loc.t('TabFavorite'), index: 0, selected: _selectedTab, onTap: (i) => _tabController.animateTo(i)),
+                      _TabItem(label: _loc.t('TabMyMixes'), index: 1, selected: _selectedTab, onTap: (i) => _tabController.animateTo(i)),
+                      _TabItem(label: _loc.t('TabMixer'), index: 2, selected: _selectedTab, onTap: (i) => _tabController.animateTo(i)),
+                    ]),
+                  ),
+                ),
+                if (!SubscriptionService().isPremium) ...[
+                  const SizedBox(width: 8),
+                  UnlockButton(
+                    label: _loc.t('UpgradeToPlus'),
+                    height: 38,
+                    fontSize: 12,
+                    horizontalPadding: 12,
+                    onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const PaywallScreen())),
+                  ),
+                ],
+              ],
             ),
           ),
           const SizedBox(height: 16),
@@ -327,7 +352,13 @@ class _MixesTab extends StatelessWidget {
                 ])),
                 ...mix.sounds.take(3).map((s) => Padding(
                   padding: const EdgeInsets.only(left: 4),
-                  child: Icon(s.icon, color: Colors.white.withValues(alpha:0.5), size: 16),
+                  child: s.iconPath != null
+                      ? Opacity(
+                          opacity: 0.5,
+                          child: Image.asset(s.iconPath!, width: 16, height: 16, fit: BoxFit.contain,
+                              errorBuilder: (_, __, ___) => Icon(s.icon, color: Colors.white.withValues(alpha:0.5), size: 16)),
+                        )
+                      : Icon(s.icon, color: Colors.white.withValues(alpha:0.5), size: 16),
                 )),
                 if (mix.sounds.length > 3) Padding(
                   padding: const EdgeInsets.only(left: 4),
@@ -520,7 +551,14 @@ class _MixerTabState extends State<_MixerTab> {
           GestureDetector(onTap: () => Navigator.pop(context), child: Icon(Icons.close, color: Colors.white.withValues(alpha:0.6))),
         ]),
         const SizedBox(height: 16),
-        Wrap(spacing: 8, runSpacing: 8, children: _selected.map((s) => Container(width: 44, height: 44, decoration: BoxDecoration(color: AppColors.purple.withValues(alpha:0.3), borderRadius: BorderRadius.circular(10)), child: Icon(s.icon, color: Colors.white, size: 22))).toList()),
+        Wrap(spacing: 8, runSpacing: 8, children: _selected.map((s) => Container(
+          width: 44, height: 44,
+          decoration: BoxDecoration(color: AppColors.purple.withValues(alpha:0.3), borderRadius: BorderRadius.circular(10)),
+          child: s.iconPath != null
+              ? Padding(padding: const EdgeInsets.all(8), child: Image.asset(s.iconPath!, fit: BoxFit.contain,
+                  errorBuilder: (_, __, ___) => Icon(s.icon, color: Colors.white, size: 22)))
+              : Icon(s.icon, color: Colors.white, size: 22),
+        )).toList()),
         const SizedBox(height: 16),
         TextField(controller: controller, style: const TextStyle(color: Colors.white),
           decoration: InputDecoration(hintText: _loc.t('HintNewMix'), hintStyle: TextStyle(color: Colors.white.withValues(alpha:0.4)), filled: true, fillColor: Colors.white.withValues(alpha:0.1), border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none))),
@@ -602,7 +640,14 @@ class _VolumeItemState extends State<_VolumeItem> {
       decoration: BoxDecoration(color: Colors.white.withValues(alpha:0.07), borderRadius: BorderRadius.circular(14)),
       child: Column(children: [
         Row(children: [
-          Container(width: 36, height: 36, decoration: BoxDecoration(shape: BoxShape.circle, color: AppColors.purple.withValues(alpha:0.4)), child: Icon(widget.sound.icon, color: Colors.white, size: 18)),
+          Container(
+            width: 36, height: 36,
+            decoration: BoxDecoration(shape: BoxShape.circle, color: AppColors.purple.withValues(alpha:0.4)),
+            child: widget.sound.iconPath != null
+                ? Padding(padding: const EdgeInsets.all(7), child: Image.asset(widget.sound.iconPath!, fit: BoxFit.contain,
+                    errorBuilder: (_, __, ___) => Icon(widget.sound.icon, color: Colors.white, size: 18)))
+                : Icon(widget.sound.icon, color: Colors.white, size: 18),
+          ),
           const SizedBox(width: 12),
           Expanded(child: Text(widget.sound.localizedName, style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w500))),
           GestureDetector(
@@ -672,7 +717,14 @@ class _MixerCardState extends State<_MixerCard> with SingleTickerProviderStateMi
               if (widget.isSelected) Positioned(top: 6, right: 6, child: Container(width: 18, height: 18, decoration: const BoxDecoration(shape: BoxShape.circle, color: Colors.amber), child: const Icon(Icons.check, color: Colors.white, size: 12))),
               if (SubscriptionService().isSoundPremium(widget.sound.name)) Positioned(top: 6, left: 6, child: Icon(Icons.diamond_rounded, color: Colors.amber.withValues(alpha: 0.8), size: 14)),
               Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
-                Icon(widget.sound.icon, color: SubscriptionService().isSoundPremium(widget.sound.name) ? Colors.white.withValues(alpha: 0.5) : Colors.white, size: 26),
+                widget.sound.iconPath != null
+                    ? Opacity(
+                        opacity: SubscriptionService().isSoundPremium(widget.sound.name) ? 0.5 : 1.0,
+                        child: Image.asset(widget.sound.iconPath!, width: 26, height: 26, fit: BoxFit.contain,
+                            errorBuilder: (_, __, ___) => Icon(widget.sound.icon,
+                                color: SubscriptionService().isSoundPremium(widget.sound.name) ? Colors.white.withValues(alpha: 0.5) : Colors.white, size: 26)),
+                      )
+                    : Icon(widget.sound.icon, color: SubscriptionService().isSoundPremium(widget.sound.name) ? Colors.white.withValues(alpha: 0.5) : Colors.white, size: 26),
                 const SizedBox(height: 6),
                 Text(widget.sound.localizedName, style: TextStyle(color: SubscriptionService().isSoundPremium(widget.sound.name) ? Colors.white.withValues(alpha: 0.5) : Colors.white, fontSize: 10), textAlign: TextAlign.center, maxLines: 2, overflow: TextOverflow.ellipsis),
               ])),
@@ -903,7 +955,7 @@ class _EditSavedMixDialogState extends State<_EditSavedMixDialog> {
     super.initState();
     // Kullanıcı vazgeçerse diye yedek kopya üzerinden çalışıyoruz
     _sounds = widget.initialSounds.map((s) => Sound(
-      name: s.name, icon: s.icon, assetPath: s.assetPath, isFavorite: s.isFavorite, isPlaying: s.isPlaying, volume: s.volume,
+      name: s.name, icon: s.icon, iconPath: s.iconPath, assetPath: s.assetPath, isFavorite: s.isFavorite, isPlaying: s.isPlaying, volume: s.volume,
     )).toList();
   }
 

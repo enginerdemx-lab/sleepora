@@ -5,6 +5,7 @@ import 'package:google_sign_in/google_sign_in.dart';
 import 'package:sign_in_with_apple/sign_in_with_apple.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'firestore_service.dart';
+import 'subscription_service.dart';
 
 /// Sleepora Authentication Servisi
 ///
@@ -127,10 +128,8 @@ class AuthService extends ChangeNotifier {
         }
       }
 
-      // 5. İlk kez giriş yapıyorsa Firestore'da kullanıcı oluştur
-      if (userCredential.additionalUserInfo?.isNewUser ?? false) {
-        await _createFirestoreUser('apple');
-      }
+      // 5. Firestore'da kullanıcının var olduğundan emin ol (yoksa oluşturur, varsa günceller)
+      await _ensureFirestoreUser('apple');
 
       // 6. Local veriyi Firestore'a migrate et
       await _migrateLocalData();
@@ -195,10 +194,8 @@ class AuthService extends ChangeNotifier {
       final userCredential = await _auth.signInWithCredential(credential);
       _user = userCredential.user;
 
-      // 5. İlk kez giriş yapıyorsa Firestore'da kullanıcı oluştur
-      if (userCredential.additionalUserInfo?.isNewUser ?? false) {
-        await _createFirestoreUser('google');
-      }
+      // 5. Firestore'da kullanıcının var olduğundan emin ol
+      await _ensureFirestoreUser('google');
 
       // 6. Local veriyi migrate et
       await _migrateLocalData();
@@ -242,6 +239,11 @@ class AuthService extends ChangeNotifier {
 
   /// Aktif oturumu sonlandırır.
   /// Google oturumu da kapatır (tekrar hesap seçtirmek için).
+  ///
+  /// ÖNEMLİ: Local premium cache'i de temizlenir. Aksi halde guest girişi
+  /// veya başka bir hesap önceki kullanıcının (ör. admin panelden manuel
+  /// premium verilmiş) premium durumunu devralır.
+  /// Gerçek IAP satın alması varsa cache korunur — App Store hesabı ile bağlı.
   Future<void> signOut() async {
     try {
       // Google oturumunu da kapat
@@ -249,6 +251,10 @@ class AuthService extends ChangeNotifier {
         await _googleSignIn.signOut();
       }
       await _auth.signOut();
+
+      // Premium cache'ini hesaba göre sıfırla
+      await SubscriptionService().handleSignOut();
+
       _user = null;
       _error = null;
       notifyListeners();
@@ -315,24 +321,39 @@ class AuthService extends ChangeNotifier {
   }
 
   // ═══════════════════════════════════════════════════════
-  // Firestore Kullanıcı Oluşturma
+  // Firestore Kullanıcı Eşitleme
   // ═══════════════════════════════════════════════════════
 
-  /// Yeni kullanıcı için Firestore dokümanı oluşturur.
-  Future<void> _createFirestoreUser(String provider) async {
+  /// Firestore'da kullanıcı dokümanının varlığından emin olur.
+  /// Yoksa oluşturur, varsa sadece güncel bilgileri (email, isim) eşitler.
+  Future<void> _ensureFirestoreUser(String provider) async {
     if (_user == null) return;
 
     try {
-      await FirestoreService().createUser(
-        uid: _user!.uid,
-        email: _user!.email,
-        displayName: _user!.displayName,
-        photoUrl: _user!.photoURL,
-        authProvider: provider,
-      );
-      debugPrint('📝 Firestore user oluşturuldu: ${_user!.uid}');
+      final fs = FirestoreService();
+      final userData = await fs.getUser(_user!.uid);
+
+      if (userData == null) {
+        // Kullanıcı Firestore'da yok, yeni oluştur
+        await fs.createUser(
+          uid: _user!.uid,
+          email: _user!.email,
+          displayName: _user!.displayName,
+          photoUrl: _user!.photoURL,
+          authProvider: provider,
+        );
+        debugPrint('📝 Firestore user oluşturuldu: ${_user!.uid}');
+      } else {
+        // Kullanıcı zaten var, sadece güncel auth bilgilerini senkronize et
+        await fs.updateUserFields(_user!.uid, {
+          'email': _user!.email,
+          'display_name': _user!.displayName,
+          'photo_url': _user!.photoURL,
+        });
+        debugPrint('📝 Firestore user bilgileri güncellendi: ${_user!.uid}');
+      }
     } catch (e) {
-      debugPrint('❌ Firestore user oluşturma hatası: $e');
+      debugPrint('❌ Firestore ensure user hatası: $e');
     }
   }
 
@@ -408,9 +429,18 @@ class AuthService extends ChangeNotifier {
       }
 
       // ─── 5. Abonelik Durumu ───
+      // GÜVENLİK: Local is_premium cache'ini KOŞULSUZCA yeni hesabın Firestore
+      // dokümanına yazma! Aksi halde admin panelden bir hesaba verilen premium,
+      // çıkış→başka giriş sonrası diğer hesaplara da bulaşır.
+      //
+      // SADECE cihazda doğrulanmış bir IAP satın alması varsa (subscription_id
+      // gerçek bir App Store ürün ID'si) Firestore'a yaz.
       final isPremium = prefs.getBool('is_premium') ?? false;
       final subscriptionId = prefs.getString('subscription_id');
-      if (isPremium) {
+      final hasVerifiedIap = subscriptionId != null &&
+          SubscriptionIds.all.contains(subscriptionId);
+
+      if (isPremium && hasVerifiedIap) {
         await fs.updateUserFields(uid, {
           'is_premium': true,
           'subscription_plan': _planFromId(subscriptionId),
@@ -423,6 +453,11 @@ class AuthService extends ChangeNotifier {
 
       // ─── 7. Migrasyonun tamamlandığını işaretle ───
       await prefs.setBool('data_migrated', true);
+
+      // ─── 8. Yeni hesabın GERÇEK premium durumunu Firestore'dan al ───
+      // Önceki hesaptan kalmış olabilecek local cache'i, yeni hesabın
+      // doğru durumuyla değiştir.
+      await SubscriptionService().syncPremiumFromFirestore();
 
       debugPrint('✅ Local veri migrasyonu tamamlandı');
     } catch (e) {
@@ -499,12 +534,16 @@ class AuthService extends ChangeNotifier {
         await prefs.setBool('notifications', userData['notifications_enabled']);
       }
 
-      // Premium durumu
-      if (userData['is_premium'] == true) {
-        await prefs.setBool('is_premium', true);
+      // Premium durumu — true VE false olarak senkronize et.
+      // Aksi halde Firestore'da premium kaldırılsa bile local cache'de
+      // true olarak kalır ve guest moduna düşüldüğünde devralınır.
+      final fsPremium = userData['is_premium'] == true;
+      await prefs.setBool('is_premium', fsPremium);
+      if (!fsPremium) {
+        await prefs.remove('subscription_id');
       }
 
-      debugPrint('🔄 Firestore → Local sync tamamlandı');
+      debugPrint('🔄 Firestore → Local sync tamamlandı (premium=$fsPremium)');
     } catch (e) {
       debugPrint('❌ Sync hatası: $e');
     }

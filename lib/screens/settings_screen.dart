@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
+import 'package:lottie/lottie.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
@@ -9,8 +10,13 @@ import '../services/subscription_service.dart';
 import '../services/localization_service.dart';
 import '../services/auth_service.dart';
 import '../services/sleep_tracking_service.dart';
+import '../services/profanity_filter.dart';
+import '../widgets/unlock_button.dart';
+import '../widgets/banner_ad_widget.dart';
+import '../services/ad_service.dart';
 import 'paywall_screen.dart';
 import 'login_screen.dart';
+import 'feedback_screen.dart';
 
 class SettingsScreen extends StatefulWidget {
   final ValueChanged<String>? onBabyNameChanged;
@@ -26,12 +32,14 @@ class _SettingsScreenState extends State<SettingsScreen> with TickerProviderStat
   final TextEditingController _nameController = TextEditingController();
   final _loc = LocalizationService();
   bool _nameSaved = false;
-  int _devTapCount = 0;
-  DateTime? _lastDevTap;
 
   // Ayar değerleri
   bool _notificationsEnabled = false;
   TimeOfDay _reminderTime = const TimeOfDay(hour: 21, minute: 0);
+  // Ön hatırlatma — açıksa ana hatırlatmadan _preReminderMinutes dk önce
+  // ekstra bir bildirim gönderilir.
+  bool _preReminderEnabled = false;
+  int _preReminderMinutes = 15; // 5 / 15 / 30 / 60 dk seçenekleri
 
   final _auth = AuthService();
 
@@ -39,6 +47,8 @@ class _SettingsScreenState extends State<SettingsScreen> with TickerProviderStat
   void initState() {
     super.initState();
     _auth.addListener(_onAuthChanged);
+    // IndexedStack içinde sabit instance — dil değişimi için kendimiz listen ediyoruz.
+    _loc.addListener(_onLanguageChanged);
     _diamondPulse = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 1800),
@@ -54,6 +64,10 @@ class _SettingsScreenState extends State<SettingsScreen> with TickerProviderStat
     if (mounted) setState(() {});
   }
 
+  void _onLanguageChanged() {
+    if (mounted) setState(() {});
+  }
+
   Future<void> _loadSettings() async {
     final prefs = await SharedPreferences.getInstance();
     setState(() {
@@ -62,11 +76,27 @@ class _SettingsScreenState extends State<SettingsScreen> with TickerProviderStat
       int remHour = prefs.getInt('rem_hour') ?? 21;
       int remMinute = prefs.getInt('rem_minute') ?? 0;
       _reminderTime = TimeOfDay(hour: remHour, minute: remMinute);
+      _preReminderEnabled = prefs.getBool('pre_rem_enabled') ?? false;
+      _preReminderMinutes = prefs.getInt('pre_rem_minutes') ?? 15;
     });
   }
 
   Future<void> _saveBabyName() async {
     final name = _nameController.text.trim();
+
+    // Küfür filtresi kontrolü
+    if (ProfanityFilter.containsProfanity(name)) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(_loc.t('ProfanityWarning')),
+          backgroundColor: AppColors.red,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        ));
+      }
+      return;
+    }
+
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('baby_name', name);
     widget.onBabyNameChanged?.call(name);
@@ -80,10 +110,14 @@ class _SettingsScreenState extends State<SettingsScreen> with TickerProviderStat
   Future<void> _toggleSetting(String key, bool value) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(key, value);
-    
+
     if (key == 'notifications') {
       if (value) {
-        await NotificationService().scheduleSleepReminder(_reminderTime);
+        await NotificationService().scheduleSleepReminder(
+          _reminderTime,
+          preReminderEnabled: _preReminderEnabled,
+          preReminderMinutesBefore: _preReminderMinutes,
+        );
       } else {
         await NotificationService().cancelReminder();
       }
@@ -94,9 +128,29 @@ class _SettingsScreenState extends State<SettingsScreen> with TickerProviderStat
     final prefs = await SharedPreferences.getInstance();
     await prefs.setInt('rem_hour', time.hour);
     await prefs.setInt('rem_minute', time.minute);
-    
+
     if (_notificationsEnabled) {
-      await NotificationService().scheduleSleepReminder(time);
+      await NotificationService().scheduleSleepReminder(
+        time,
+        preReminderEnabled: _preReminderEnabled,
+        preReminderMinutesBefore: _preReminderMinutes,
+      );
+    }
+  }
+
+  /// Ön hatırlatma toggle'ı veya süre seçimi değiştiğinde çağrılır.
+  /// Ana hatırlatma açıksa tüm planı yeniden kurar.
+  Future<void> _savePreReminder() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('pre_rem_enabled', _preReminderEnabled);
+    await prefs.setInt('pre_rem_minutes', _preReminderMinutes);
+
+    if (_notificationsEnabled) {
+      await NotificationService().scheduleSleepReminder(
+        _reminderTime,
+        preReminderEnabled: _preReminderEnabled,
+        preReminderMinutesBefore: _preReminderMinutes,
+      );
     }
   }
 
@@ -108,6 +162,7 @@ class _SettingsScreenState extends State<SettingsScreen> with TickerProviderStat
   @override
   void dispose() {
     _auth.removeListener(_onAuthChanged);
+    _loc.removeListener(_onLanguageChanged);
     _nameController.dispose();
     _diamondPulse.dispose();
     _diamondRotate.dispose();
@@ -125,34 +180,12 @@ class _SettingsScreenState extends State<SettingsScreen> with TickerProviderStat
           children: [
             const SizedBox(height: 32),
 
-            // ─── Logo + Başlık + Dil Seçimi ───
+            // ─── Logo + Başlık + (Premium ise) sağda Plus rozeti ───
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 20),
               child: Row(
                 children: [
-                  GestureDetector(
-                    onTap: () {
-                      final now = DateTime.now();
-                      if (_lastDevTap != null && now.difference(_lastDevTap!).inSeconds > 3) {
-                        _devTapCount = 0;
-                      }
-                      _lastDevTap = now;
-                      _devTapCount++;
-                      if (_devTapCount >= 5) {
-                        _devTapCount = 0;
-                        SubscriptionService().toggleDebugPremium();
-                        setState(() {});
-                        final isOn = SubscriptionService().isDebugPremium;
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text(isOn ? '🔓 Test Premium: AÇIK' : '🔒 Test Premium: KAPALI'),
-                            backgroundColor: isOn ? Colors.green : Colors.orange,
-                            duration: const Duration(seconds: 2),
-                          ),
-                        );
-                      }
-                    },
-                    child: Container(
+                  Container(
                       width: 56,
                       height: 56,
                       decoration: BoxDecoration(
@@ -163,22 +196,28 @@ class _SettingsScreenState extends State<SettingsScreen> with TickerProviderStat
                         ),
                       ),
                     ),
-                  ),
                   const SizedBox(width: 14),
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text('Sleepora', style: TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.w700)),
-                      Text(_loc.t('AppSubtitle'), style: TextStyle(color: Colors.white.withValues(alpha:0.5), fontSize: 11, fontWeight: FontWeight.w500)),
-                    ],
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text('Sleepora', style: TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.w700)),
+                        Text(_loc.t('AppSubtitle'), style: TextStyle(color: Colors.white.withValues(alpha:0.5), fontSize: 11, fontWeight: FontWeight.w500)),
+                      ],
+                    ),
                   ),
+                  // Premium kullanıcı için sağ üst köşede Plus rozeti
+                  if (SubscriptionService().isPremium) _buildHeaderPlusBadge(),
                 ],
               ),
             ),
 
+            // Premium kullanıcı için büyük kartı tamamen gizliyoruz —
+            // üstteki header rozeti zaten Plus durumunu gösteriyor.
+            if (SubscriptionService().isPremium) const SizedBox.shrink() else ...[
             const SizedBox(height: 20),
 
-            // ─── Premium Abonelik ───
+            // ─── Premium Abonelik (sadece ücretsiz kullanıcılar için) ───
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
               child: GestureDetector(
@@ -189,22 +228,25 @@ class _SettingsScreenState extends State<SettingsScreen> with TickerProviderStat
                 child: Container(
                   padding: const EdgeInsets.all(16),
                   decoration: BoxDecoration(
-                    gradient: SubscriptionService().isPremium
-                        ? const LinearGradient(colors: [Color(0xFF1A3D0E), Color(0xFF0D2818)])
-                        : const LinearGradient(
-                            begin: Alignment.topLeft,
-                            end: Alignment.bottomRight,
-                            colors: [Color(0xFF2A1060), Color(0xFF4C1D95), Color(0xFF3B1F8C)],
-                          ),
+                    gradient: const LinearGradient(
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                      colors: [Color(0xFF2A1060), Color(0xFF4C1D95), Color(0xFF3B1F8C)],
+                    ),
                     borderRadius: BorderRadius.circular(20),
                     border: Border.all(
                       color: SubscriptionService().isPremium
-                          ? AppColors.green.withValues(alpha:0.3)
-                          : const Color(0xFF8B5CF6).withValues(alpha:0.4),
+                          ? const Color(0xFFB794F4).withValues(alpha: 0.5)
+                          : const Color(0xFF8B5CF6).withValues(alpha: 0.4),
+                      width: SubscriptionService().isPremium ? 1.5 : 1,
                     ),
-                    boxShadow: SubscriptionService().isPremium
-                        ? null
-                        : [BoxShadow(color: const Color(0xFF8B5CF6).withValues(alpha:0.15), blurRadius: 16, offset: const Offset(0, 4))],
+                    boxShadow: [
+                      BoxShadow(
+                        color: const Color(0xFF8B5CF6).withValues(alpha: SubscriptionService().isPremium ? 0.2 : 0.15),
+                        blurRadius: 20,
+                        offset: const Offset(0, 4),
+                      ),
+                    ],
                   ),
                   child: Row(
                     children: [
@@ -225,24 +267,34 @@ class _SettingsScreenState extends State<SettingsScreen> with TickerProviderStat
                               width: 48,
                               height: 48,
                               decoration: BoxDecoration(
-                                gradient: SubscriptionService().isPremium
-                                    ? const LinearGradient(colors: [Color(0xFF10B981), Color(0xFF059669)])
-                                    : const LinearGradient(
-                                        begin: Alignment.topLeft,
-                                        end: Alignment.bottomRight,
-                                        colors: [Color(0xFF8B5CF6), Color(0xFFA78BFA), Color(0xFF7C3AED)],
-                                      ),
+                                gradient: const LinearGradient(
+                                  begin: Alignment.topLeft,
+                                  end: Alignment.bottomRight,
+                                  colors: [Color(0xFF8B5CF6), Color(0xFFA78BFA), Color(0xFF7C3AED)],
+                                ),
                                 borderRadius: BorderRadius.circular(14),
-                                boxShadow: SubscriptionService().isPremium
-                                    ? null
-                                    : [BoxShadow(color: const Color(0xFF8B5CF6).withValues(alpha:glow), blurRadius: 14, spreadRadius: 1)],
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: const Color(0xFF8B5CF6).withValues(alpha: glow),
+                                    blurRadius: 14,
+                                    spreadRadius: 1,
+                                  ),
+                                ],
                               ),
-                              child: Icon(
-                                SubscriptionService().isPremium
-                                    ? Icons.check_circle_rounded
-                                    : Icons.diamond_rounded,
-                                color: Colors.white,
-                                size: 26,
+                              child: Padding(
+                                padding: const EdgeInsets.all(6),
+                                child: Lottie.asset(
+                                  'assets/images/elmas.json',
+                                  fit: BoxFit.contain,
+                                  repeat: true,
+                                  // PNG fallback (paket yüklenmediyse veya
+                                  // animasyon dosyası bulunamazsa Material ikonu)
+                                  errorBuilder: (_, __, ___) => const Icon(
+                                    Icons.diamond_rounded,
+                                    color: Colors.white,
+                                    size: 26,
+                                  ),
+                                ),
                               ),
                             ),
                           );
@@ -253,25 +305,78 @@ class _SettingsScreenState extends State<SettingsScreen> with TickerProviderStat
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text(
-                              SubscriptionService().isPremium ? _loc.t('PremiumActive') : 'Sleepora Plus',
-                              style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w700),
+                            Row(
+                              children: [
+                                const Text(
+                                  'Sleepora Plus',
+                                  style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w700),
+                                ),
+                                if (SubscriptionService().isPremium) ...[
+                                  const SizedBox(width: 8),
+                                  // ── Premium badge ──
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                    decoration: BoxDecoration(
+                                      gradient: const LinearGradient(
+                                        colors: [Color(0xFFB794F4), Color(0xFF7C3AED)],
+                                      ),
+                                      borderRadius: BorderRadius.circular(20),
+                                      boxShadow: [
+                                        BoxShadow(
+                                          color: const Color(0xFF8B5CF6).withValues(alpha: 0.4),
+                                          blurRadius: 8,
+                                        ),
+                                      ],
+                                    ),
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        const Text('✦', style: TextStyle(color: Colors.white, fontSize: 9)),
+                                        const SizedBox(width: 3),
+                                        Text(
+                                          _loc.t('ActiveBadge'),
+                                          style: const TextStyle(
+                                            color: Colors.white,
+                                            fontSize: 10,
+                                            fontWeight: FontWeight.w800,
+                                            letterSpacing: 0.8,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              ],
                             ),
                             const SizedBox(height: 3),
                             Text(
-                              SubscriptionService().isPremium ? _loc.t('AllUnlocked') : _loc.t('UnlockAllFeatures'),
-                              style: TextStyle(color: Colors.white.withValues(alpha:0.6), fontSize: 12),
+                              SubscriptionService().isPremium
+                                  ? _loc.t('AllUnlocked')
+                                  : _loc.t('UnlockAllFeatures'),
+                              style: TextStyle(
+                                color: Colors.white.withValues(alpha: 0.55),
+                                fontSize: 12,
+                              ),
                             ),
                           ],
                         ),
                       ),
                       if (!SubscriptionService().isPremium)
-                        Icon(Icons.chevron_right_rounded, color: Colors.white.withValues(alpha:0.5), size: 24),
+                        // Tıklamayı dışarıya iletme — kart zaten navigate ediyor
+                        IgnorePointer(
+                          child: UnlockButton(
+                            label: _loc.t('UpgradeToPlus'),
+                            height: 36,
+                            fontSize: 12,
+                            horizontalPadding: 12,
+                          ),
+                        ),
                     ],
                   ),
                 ),
               ),
             ),
+            ], // büyük Plus kartı bloğu sonu (sadece non-premium)
 
             const SizedBox(height: 16),
 
@@ -282,11 +387,80 @@ class _SettingsScreenState extends State<SettingsScreen> with TickerProviderStat
             ),
 
             // ─── Uyku İstatistikleri (sadece giriş yapılmışsa) ───
+            // Önceden inline kartla gösteriliyordu; artık tıklanabilir
+            // launcher tile → tüm istatistikler açılır pencerede açılır.
             if (_auth.isLoggedIn) ...[
               const SizedBox(height: 12),
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: _SleepStatsCard(),
+                child: GestureDetector(
+                  onTap: () => _openSleepStatsDialog(context),
+                  child: Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(16),
+                      gradient: LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [
+                          const Color(0xFF8B5CF6).withValues(alpha: 0.10),
+                          const Color(0xFF1A1025),
+                        ],
+                      ),
+                      border: Border.all(
+                        color: const Color(0xFF8B5CF6).withValues(alpha: 0.18),
+                      ),
+                    ),
+                    child: Row(
+                      children: [
+                        Container(
+                          width: 40,
+                          height: 40,
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(12),
+                            color: const Color(0xFF8B5CF6).withValues(alpha: 0.18),
+                          ),
+                          child: const Icon(
+                            Icons.nightlight_round,
+                            color: Color(0xFF8B5CF6),
+                            size: 22,
+                          ),
+                        ),
+                        const SizedBox(width: 14),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                _loc.t('SleepStatsTitle'),
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                              const SizedBox(height: 3),
+                              Text(
+                                _loc.t('SleepStatsDesc'),
+                                style: TextStyle(
+                                  color: Colors.white.withValues(alpha: 0.4),
+                                  fontSize: 11,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ],
+                          ),
+                        ),
+                        Icon(
+                          Icons.chevron_right_rounded,
+                          color: Colors.white.withValues(alpha: 0.45),
+                          size: 22,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
               ),
             ],
 
@@ -379,7 +553,8 @@ class _SettingsScreenState extends State<SettingsScreen> with TickerProviderStat
                 child: Column(
                   children: [
                     _SettingToggleRow(
-                      icon: Icons.notifications_active_rounded,
+                      assetPath: 'assets/images/hatirlatici.png',
+                      assetScale: 1.55, // çan küçük kalmıştı, bol zoom
                       iconColor: const Color(0xFFFBBF24),
                       bgColor: const Color(0xFF3D3200),
                       label: _loc.t('SleepReminder'),
@@ -394,50 +569,209 @@ class _SettingsScreenState extends State<SettingsScreen> with TickerProviderStat
                       duration: const Duration(milliseconds: 300),
                       child: _notificationsEnabled
                           ? Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+                              padding: const EdgeInsets.fromLTRB(16, 4, 16, 14),
                               decoration: BoxDecoration(
-                                color: Colors.white.withValues(alpha:0.02),
+                                color: Colors.white.withValues(alpha: 0.02),
                                 borderRadius: const BorderRadius.only(
                                   bottomLeft: Radius.circular(20),
                                   bottomRight: Radius.circular(20),
                                 ),
                               ),
-                              child: Row(
-                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
                                 children: [
-                                  Text(_loc.t('ReminderTime'), style: TextStyle(color: Colors.white.withValues(alpha:0.6), fontSize: 13, fontWeight: FontWeight.w500)),
-                                  GestureDetector(
-                                    onTap: () async {
-                                      final time = await showTimePicker(
-                                        context: context,
-                                        initialTime: _reminderTime,
-                                        builder: (context, child) => Theme(
-                                          data: ThemeData.dark().copyWith(
-                                            colorScheme: ColorScheme.dark(
-                                              primary: AppColors.purple,
-                                              onPrimary: Colors.white,
-                                              surface: const Color(0xFF1A1025),
-                                              onSurface: Colors.white,
+                                  // ─── 1) Ana Hatırlatma kartı ───
+                                  _ReminderRowCard(
+                                    accent: const Color(0xFFFBBF24),
+                                    icon: Icons.alarm_rounded,
+                                    title: _loc.t('ReminderMain'),
+                                    description: _loc.t('ReminderMainDesc'),
+                                    trailing: GestureDetector(
+                                      onTap: () async {
+                                        final time = await showTimePicker(
+                                          context: context,
+                                          initialTime: _reminderTime,
+                                          builder: (context, child) => Theme(
+                                            data: ThemeData.dark().copyWith(
+                                              colorScheme: ColorScheme.dark(
+                                                primary: AppColors.purple,
+                                                onPrimary: Colors.white,
+                                                surface: const Color(0xFF1A1025),
+                                                onSurface: Colors.white,
+                                              ),
+                                            ),
+                                            child: child!,
+                                          ),
+                                        );
+                                        if (time != null) {
+                                          setState(() => _reminderTime = time);
+                                          _saveReminderTime(time);
+                                        }
+                                      },
+                                      child: Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                                        decoration: BoxDecoration(
+                                          gradient: const LinearGradient(
+                                            colors: [Color(0xFFFBBF24), Color(0xFFD97706)],
+                                          ),
+                                          borderRadius: BorderRadius.circular(10),
+                                          boxShadow: [
+                                            BoxShadow(
+                                              color: const Color(0xFFFBBF24).withValues(alpha: 0.3),
+                                              blurRadius: 8,
+                                              offset: const Offset(0, 2),
+                                            ),
+                                          ],
+                                        ),
+                                        child: Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            const Icon(Icons.access_time_rounded, color: Colors.white, size: 14),
+                                            const SizedBox(width: 6),
+                                            Text(
+                                              _reminderTime.format(context),
+                                              style: const TextStyle(
+                                                color: Colors.white,
+                                                fontSize: 14,
+                                                fontWeight: FontWeight.w800,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+
+                                  const SizedBox(height: 10),
+
+                                  // ─── 2) Ön Hatırlatma kartı (toggle'lı) ───
+                                  _ReminderRowCard(
+                                    accent: const Color(0xFF8B5CF6),
+                                    icon: Icons.notifications_active_rounded,
+                                    title: _loc.t('PreReminder'),
+                                    description: _loc.t('PreReminderDesc'),
+                                    trailing: Transform.scale(
+                                      scale: 0.85,
+                                      child: Switch.adaptive(
+                                        value: _preReminderEnabled,
+                                        activeColor: const Color(0xFF8B5CF6),
+                                        onChanged: (v) {
+                                          setState(() => _preReminderEnabled = v);
+                                          _savePreReminder();
+                                        },
+                                      ),
+                                    ),
+                                  ),
+
+                                  // Ön hatırlatma açıksa: dakika seçimi
+                                  AnimatedSize(
+                                    duration: const Duration(milliseconds: 240),
+                                    curve: Curves.easeOutCubic,
+                                    child: !_preReminderEnabled
+                                        ? const SizedBox.shrink()
+                                        : Padding(
+                                            padding: const EdgeInsets.fromLTRB(14, 10, 4, 0),
+                                            child: Column(
+                                              crossAxisAlignment: CrossAxisAlignment.start,
+                                              children: [
+                                                Text(
+                                                  _loc.t('PreReminderOffset'),
+                                                  style: TextStyle(
+                                                    color: Colors.white.withValues(alpha: 0.55),
+                                                    fontSize: 11,
+                                                    fontWeight: FontWeight.w600,
+                                                    letterSpacing: 0.4,
+                                                  ),
+                                                ),
+                                                const SizedBox(height: 8),
+                                                // Dakika çipleri: 5 / 15 / 30 / 60
+                                                Wrap(
+                                                  spacing: 8,
+                                                  runSpacing: 6,
+                                                  children: [5, 15, 30, 60].map((m) {
+                                                    final selected = _preReminderMinutes == m;
+                                                    return GestureDetector(
+                                                      onTap: () {
+                                                        setState(() => _preReminderMinutes = m);
+                                                        _savePreReminder();
+                                                      },
+                                                      child: AnimatedContainer(
+                                                        duration: const Duration(milliseconds: 220),
+                                                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+                                                        decoration: BoxDecoration(
+                                                          gradient: selected
+                                                              ? const LinearGradient(
+                                                                  colors: [Color(0xFF8B5CF6), Color(0xFF6D28D9)],
+                                                                )
+                                                              : null,
+                                                          color: selected ? null : Colors.white.withValues(alpha: 0.06),
+                                                          borderRadius: BorderRadius.circular(10),
+                                                          border: Border.all(
+                                                            color: selected
+                                                                ? const Color(0xFF8B5CF6).withValues(alpha: 0.6)
+                                                                : Colors.white.withValues(alpha: 0.08),
+                                                          ),
+                                                        ),
+                                                        child: Text(
+                                                          '$m ${_loc.t('MinutesBefore')}',
+                                                          style: TextStyle(
+                                                            color: selected ? Colors.white : Colors.white.withValues(alpha: 0.7),
+                                                            fontSize: 12,
+                                                            fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
+                                                          ),
+                                                        ),
+                                                      ),
+                                                    );
+                                                  }).toList(),
+                                                ),
+                                              ],
                                             ),
                                           ),
-                                          child: child!,
+                                  ),
+
+                                  const SizedBox(height: 12),
+
+                                  // ─── 3) Bilgi callout'u ───
+                                  Container(
+                                    padding: const EdgeInsets.fromLTRB(12, 9, 12, 9),
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFF06B6D4).withValues(alpha: 0.07),
+                                      borderRadius: BorderRadius.circular(12),
+                                      border: Border.all(
+                                        color: const Color(0xFF06B6D4).withValues(alpha: 0.18),
+                                      ),
+                                    ),
+                                    child: Row(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        const Icon(Icons.info_outline_rounded, color: Color(0xFF67E8F9), size: 14),
+                                        const SizedBox(width: 8),
+                                        Expanded(
+                                          child: Column(
+                                            crossAxisAlignment: CrossAxisAlignment.start,
+                                            children: [
+                                              Text(
+                                                _loc.t('ReminderInfoTitle'),
+                                                style: const TextStyle(
+                                                  color: Color(0xFF67E8F9),
+                                                  fontSize: 11,
+                                                  fontWeight: FontWeight.w800,
+                                                  letterSpacing: 0.3,
+                                                ),
+                                              ),
+                                              const SizedBox(height: 3),
+                                              Text(
+                                                _loc.t('ReminderInfoDesc'),
+                                                style: TextStyle(
+                                                  color: Colors.white.withValues(alpha: 0.62),
+                                                  fontSize: 11,
+                                                  height: 1.4,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
                                         ),
-                                      );
-                                      if (time != null) {
-                                        setState(() => _reminderTime = time);
-                                        _saveReminderTime(time);
-                                      }
-                                    },
-                                    child: Container(
-                                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                                      decoration: BoxDecoration(
-                                        color: Colors.white.withValues(alpha:0.08),
-                                        borderRadius: BorderRadius.circular(10),
-                                      ),
-                                      child: Text(
-                                        _reminderTime.format(context),
-                                        style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w600),
-                                      ),
+                                      ],
                                     ),
                                   ),
                                 ],
@@ -481,6 +815,10 @@ class _SettingsScreenState extends State<SettingsScreen> with TickerProviderStat
                       _LanguageRow(name: 'Français', flag: '🇫🇷', isSelected: _loc.selectedLang == 3, onTap: () => _updateLang(3)),
                       _RowDivider(),
                       _LanguageRow(name: 'Deutsch', flag: '🇩🇪', isSelected: _loc.selectedLang == 4, onTap: () => _updateLang(4)),
+                      _RowDivider(),
+                      _LanguageRow(name: 'Русский', flag: '🇷🇺', isSelected: _loc.selectedLang == 5, onTap: () => _updateLang(5)),
+                      _RowDivider(),
+                      _LanguageRow(name: 'العربية', flag: '🇸🇦', isSelected: _loc.selectedLang == 6, onTap: () => _updateLang(6)),
                       const SizedBox(height: 8),
                     ],
                   ),
@@ -509,9 +847,13 @@ class _SettingsScreenState extends State<SettingsScreen> with TickerProviderStat
                 child: Column(
                   children: [
                     _ContactRow(
-                      faIcon: FontAwesomeIcons.solidStar,
-                      iconColor: const Color(0xFFFFD700),
-                      bgColor: const Color(0xFF3D3200),
+                      faIcon: FontAwesomeIcons.star,
+                      iconColor: Colors.white,
+                      gradient: const LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [Color(0xFFFFB347), Color(0xFFFFD700)],
+                      ),
                       label: _loc.t('RateApp'),
                       onTap: () async {
                         final uri = Uri.parse('https://apps.apple.com/app/id6745027461');
@@ -523,8 +865,12 @@ class _SettingsScreenState extends State<SettingsScreen> with TickerProviderStat
                     _RowDivider(),
                     _ContactRow(
                       faIcon: FontAwesomeIcons.instagram,
-                      iconColor: const Color(0xFFE1306C),
-                      bgColor: const Color(0xFF3D0E1E),
+                      iconColor: Colors.white,
+                      gradient: const LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [Color(0xFFF77737), Color(0xFFE1306C), Color(0xFF833AB4)],
+                      ),
                       label: _loc.t('FollowInsta'),
                       onTap: () async {
                         final uri = Uri.parse('https://instagram.com/sleepora');
@@ -536,8 +882,12 @@ class _SettingsScreenState extends State<SettingsScreen> with TickerProviderStat
                     _RowDivider(),
                     _ContactRow(
                       faIcon: FontAwesomeIcons.youtube,
-                      iconColor: const Color(0xFFFF0000),
-                      bgColor: const Color(0xFF3D0A0A),
+                      iconColor: Colors.white,
+                      gradient: const LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [Color(0xFFFF416C), Color(0xFFFF4B2B)],
+                      ),
                       label: _loc.t('YouTubeChannel'),
                       onTap: () async {
                         final uri = Uri.parse('https://youtube.com/@sleepora');
@@ -548,12 +898,28 @@ class _SettingsScreenState extends State<SettingsScreen> with TickerProviderStat
                     ),
                     _RowDivider(),
                     _ContactRow(
-                      faIcon: FontAwesomeIcons.envelope,
-                      iconColor: const Color(0xFF7C3AED),
-                      bgColor: const Color(0xFF1E0E3D),
+                      icon: Icons.rate_review_rounded,
+                      iconColor: Colors.white,
+                      gradient: const LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [Color(0xFF7C3AED), Color(0xFF5DE8DA)],
+                      ),
+                      label: _loc.t('FeedbackTitle'),
+                      onTap: () => FeedbackScreen.show(context),
+                    ),
+                    _RowDivider(),
+                    _ContactRow(
+                      icon: Icons.mail_rounded,
+                      iconColor: Colors.white,
+                      gradient: const LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [Color(0xFF8B5CF6), Color(0xFF6D28D9)],
+                      ),
                       label: _loc.t('ContactFeed'),
                       onTap: () async {
-                        final uri = Uri.parse('mailto:destek@sleepora.com?subject=Sleepora%20Geri%20Bildirim');
+                        final uri = Uri.parse('mailto:destek@sleepora.app?subject=Sleepora%20Geri%20Bildirim');
                         if (await canLaunchUrl(uri)) {
                           await launchUrl(uri);
                         }
@@ -561,12 +927,16 @@ class _SettingsScreenState extends State<SettingsScreen> with TickerProviderStat
                     ),
                     _RowDivider(),
                     _ContactRow(
-                      faIcon: FontAwesomeIcons.shieldHalved,
-                      iconColor: const Color(0xFF60A5FA),
-                      bgColor: const Color(0xFF0F2440),
+                      icon: Icons.shield_rounded,
+                      iconColor: Colors.white,
+                      gradient: const LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [Color(0xFF38BDF8), Color(0xFF0EA5E9)],
+                      ),
                       label: _loc.t('PrivacyPolicy'),
                       onTap: () async {
-                        final uri = Uri.parse('https://enginerdemx-lab.github.io/bebek-uykusu-app/privacy-policy.html');
+                        final uri = Uri.parse('https://sleepora.app/privacy-policy.html');
                         if (await canLaunchUrl(uri)) {
                           await launchUrl(uri, mode: LaunchMode.externalApplication);
                         }
@@ -579,6 +949,87 @@ class _SettingsScreenState extends State<SettingsScreen> with TickerProviderStat
 
             const SizedBox(height: 32),
 
+            // ─── Hesap Aksiyonları — Çıkış Yap + Hesabı Sil ───
+            // Sadece giriş yapılmışsa göster. Çıkış Yap nötr (kehribar/amber),
+            // Hesabı Sil yıkıcı (koyu kırmızı). Apple Guideline 5.1.1(v) uyumu:
+            // hesap silme açıkça keşfedilebilir ve eşit görsel hiyerarşide.
+            if (_auth.isLoggedIn) ...[
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                child: Column(
+                  children: [
+                    // Çıkış Yap — turuncu tonlu, uyarı seviyesi
+                    GestureDetector(
+                      onTap: _handleSignOut,
+                      child: Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF59E0B).withValues(alpha: 0.12),
+                          borderRadius: BorderRadius.circular(14),
+                          border: Border.all(
+                            color: const Color(0xFFF59E0B).withValues(alpha: 0.35),
+                            width: 1,
+                          ),
+                        ),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            const Icon(Icons.logout_rounded,
+                                color: Color(0xFFF59E0B), size: 18),
+                            const SizedBox(width: 10),
+                            Text(
+                              _loc.t('AccountSignOut'),
+                              style: const TextStyle(
+                                color: Color(0xFFF59E0B),
+                                fontSize: 15,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    // Hesabı Sil — kırmızı tonlu, yıkıcı seviyesi
+                    GestureDetector(
+                      onTap: _handleDeleteAccount,
+                      child: Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFEF4444).withValues(alpha: 0.12),
+                          borderRadius: BorderRadius.circular(14),
+                          border: Border.all(
+                            color: const Color(0xFFEF4444).withValues(alpha: 0.4),
+                            width: 1,
+                          ),
+                        ),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            const Icon(Icons.delete_outline_rounded,
+                                color: Color(0xFFEF4444), size: 18),
+                            const SizedBox(width: 10),
+                            Text(
+                              _loc.t('DeleteAccountTitle'),
+                              style: const TextStyle(
+                                color: Color(0xFFEF4444),
+                                fontSize: 15,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+
+            const SizedBox(height: 16),
+
             // ─── Alt bilgi ───
             Center(
               child: Column(
@@ -588,6 +1039,138 @@ class _SettingsScreenState extends State<SettingsScreen> with TickerProviderStat
                   Text(_loc.t('PeacefulSleep'), style: TextStyle(color: Colors.white.withValues(alpha:0.15), fontSize: 11)),
                 ],
               ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // Uyku İstatistikleri Açılır Penceresi
+  // ═══════════════════════════════════════════════════════════
+  /// Settings'teki uyku istatistikleri tile'ına basıldığında çağrılır.
+  /// Tüm istatistik kartını (grafik + chip'ler + bugünkü uyutmalar +
+  /// saatlik dağılım + streak) modal dialog içinde gösterir.
+  void _openSleepStatsDialog(BuildContext context) {
+    showDialog(
+      context: context,
+      barrierColor: Colors.black.withValues(alpha: 0.65),
+      builder: (dialogContext) {
+        return Dialog(
+          backgroundColor: Colors.transparent,
+          insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 32),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              // Ekran yüksekliğinin %85'ini geçmesin — uzun listeler scroll'lar
+              maxHeight: MediaQuery.of(dialogContext).size.height * 0.85,
+              maxWidth: 560,
+            ),
+            child: SingleChildScrollView(
+              child: _SleepStatsCard(
+                onClose: () => Navigator.of(dialogContext).pop(),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // Premium kullanıcı için sağ üst köşede kompakt Plus rozeti
+  // ═══════════════════════════════════════════════════════════
+
+  /// Plus rozeti — yalnızca [SubscriptionService.isPremium] true iken çağrılır.
+  /// Sol tarafta animasyonlu elmas (Lottie), sağında "Sleepora Plus" başlığı
+  /// ve abonelik tipine göre durum metni ("Ömür Boyu", "{N} gün kaldı" veya
+  /// fallback "Aktif").
+  Widget _buildHeaderPlusBadge() {
+    final svc = SubscriptionService();
+    final loc = _loc;
+
+    // Durum metnini belirle
+    String statusText;
+    if (svc.isLifetime) {
+      statusText = loc.t('Lifetime');
+    } else if (svc.remainingDays != null) {
+      statusText = loc.t('DaysLeft').replaceAll('{n}', '${svc.remainingDays}');
+    } else if (svc.subscriptionPlan == 'monthly') {
+      statusText = loc.t('MonthlyPlan');
+    } else if (svc.subscriptionPlan == 'yearly') {
+      statusText = loc.t('YearlyPlan');
+    } else {
+      statusText = loc.t('ActiveBadge');
+    }
+
+    return GestureDetector(
+      onTap: () => Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => const PaywallScreen()),
+      ),
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(8, 6, 12, 6),
+        decoration: BoxDecoration(
+          gradient: const LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [Color(0xFF4C1D95), Color(0xFF7C3AED)],
+          ),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+            color: const Color(0xFFB794F4).withValues(alpha: 0.45),
+            width: 1,
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: const Color(0xFF8B5CF6).withValues(alpha: 0.35),
+              blurRadius: 10,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Lottie elmas
+            SizedBox(
+              width: 32,
+              height: 32,
+              child: Lottie.asset(
+                'assets/images/elmas.json',
+                fit: BoxFit.contain,
+                repeat: true,
+                errorBuilder: (_, __, ___) => const Icon(
+                  Icons.diamond_rounded,
+                  color: Colors.white,
+                  size: 22,
+                ),
+              ),
+            ),
+            const SizedBox(width: 6),
+            Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Sleepora Plus',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 0.2,
+                  ),
+                ),
+                const SizedBox(height: 1),
+                Text(
+                  statusText,
+                  style: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.75),
+                    fontSize: 10,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ],
             ),
           ],
         ),
@@ -896,6 +1479,21 @@ class _SettingsScreenState extends State<SettingsScreen> with TickerProviderStat
               onPressed: _saving ? null : () async {
                 final name = controller.text.trim();
                 if (name.isEmpty) return;
+
+                // Küfür filtresi kontrolü
+                if (ProfanityFilter.containsProfanity(name)) {
+                  if (ctx.mounted) Navigator.pop(ctx);
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                      content: Text(_loc.t('ProfanityWarning')),
+                      backgroundColor: AppColors.red,
+                      behavior: SnackBarBehavior.floating,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    ));
+                  }
+                  return;
+                }
+
                 setLocal(() => _saving = true);
                 final ok = await _auth.updateDisplayName(name);
                 if (ctx.mounted) Navigator.pop(ctx);
@@ -961,7 +1559,7 @@ class _SettingsScreenState extends State<SettingsScreen> with TickerProviderStat
           ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Çıkış Yap', style: TextStyle(color: Color(0xFFEF4444), fontWeight: FontWeight.w600)),
+            child: Text(_loc.t('AccountSignOut'), style: const TextStyle(color: Color(0xFFEF4444), fontWeight: FontWeight.w600)),
           ),
         ],
       ),
@@ -984,7 +1582,7 @@ class _SettingsScreenState extends State<SettingsScreen> with TickerProviderStat
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text('Hata: $e'),
+              content: Text('${_loc.t('ErrorPrefix')}: $e'),
               backgroundColor: const Color(0xFFEF4444),
               behavior: SnackBarBehavior.floating,
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
@@ -994,11 +1592,275 @@ class _SettingsScreenState extends State<SettingsScreen> with TickerProviderStat
       }
     }
   }
+
+  // ═══════════════════════════════════════════════════════
+  // Apple Guideline 5.1.1(v) — Hesap Silme (Account Deletion)
+  // ═══════════════════════════════════════════════════════
+
+  /// İki adımlı onaylı hesap silme akışı.
+  /// 1. Kullanıcı uyarıyı kabul eder.
+  /// 2. Son kez onaylar (TextField "SİL" yazımı ile).
+  /// 3. AuthService.deleteAccount() çağrılır; başarısızsa yeniden
+  ///    kimlik doğrulama yönlendirmesi yapılır.
+  Future<void> _handleDeleteAccount() async {
+    // ── 1. Uyarı + ilk onay
+    final firstConfirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1A1025),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Row(
+          children: [
+            const Icon(Icons.warning_amber_rounded, color: Color(0xFFEF4444), size: 24),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                _loc.t('DeleteAccountTitle'),
+                style: const TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.w700),
+              ),
+            ),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              _loc.t('DeleteAccountWarning'),
+              style: TextStyle(color: Colors.white.withValues(alpha: 0.75), fontSize: 14, height: 1.4),
+            ),
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: const Color(0xFFEF4444).withValues(alpha: 0.08),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Text(
+                _loc.t('DeleteAccountConsequences'),
+                style: TextStyle(color: Colors.white.withValues(alpha: 0.6), fontSize: 12, height: 1.4),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text(_loc.t('Cancel'), style: const TextStyle(color: Colors.white54)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(
+              _loc.t('Continue'),
+              style: const TextStyle(color: Color(0xFFEF4444), fontWeight: FontWeight.w700),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (firstConfirm != true || !mounted) return;
+
+    // ── 2. Son onay (yazılı doğrulama)
+    final keyword = _loc.t('DeleteConfirmKeyword'); // "SİL" / "DELETE"
+    final controller = TextEditingController();
+    bool canDelete = false;
+    final finalConfirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setLocal) => AlertDialog(
+          backgroundColor: const Color(0xFF1A1025),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          title: Text(
+            _loc.t('DeleteAccountConfirmTitle'),
+            style: const TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.w700),
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                _loc.t('DeleteAccountTypeToConfirm').replaceAll('{keyword}', keyword),
+                style: TextStyle(color: Colors.white.withValues(alpha: 0.7), fontSize: 13, height: 1.4),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: controller,
+                autofocus: true,
+                style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w600),
+                textCapitalization: TextCapitalization.characters,
+                onChanged: (v) => setLocal(() => canDelete = v.trim().toUpperCase() == keyword.toUpperCase()),
+                decoration: InputDecoration(
+                  filled: true,
+                  fillColor: Colors.white.withValues(alpha: 0.06),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide.none,
+                  ),
+                  hintText: keyword,
+                  hintStyle: TextStyle(color: Colors.white.withValues(alpha: 0.25), fontSize: 14),
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: Text(_loc.t('Cancel'), style: const TextStyle(color: Colors.white54)),
+            ),
+            TextButton(
+              onPressed: canDelete ? () => Navigator.pop(ctx, true) : null,
+              child: Text(
+                _loc.t('DeleteAccountTitle'),
+                style: TextStyle(
+                  color: canDelete ? const Color(0xFFEF4444) : Colors.white24,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (finalConfirm != true || !mounted) return;
+
+    // ── 3. Silme işlemini başlat
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const Center(child: CircularProgressIndicator(color: Color(0xFFEF4444))),
+    );
+
+    final ok = await _auth.deleteAccount();
+
+    if (!mounted) return;
+    Navigator.of(context, rootNavigator: true).pop(); // progress dialog'u kapat
+
+    if (ok) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(_loc.t('DeleteAccountSuccess')),
+          backgroundColor: AppColors.green,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        ),
+      );
+      // Login ekranına yönlendir
+      if (mounted) {
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (_) => const LoginScreen()),
+          (route) => false,
+        );
+      }
+    } else {
+      final err = _auth.error ?? _loc.t('DeleteAccountError');
+      final needsReauth = err.contains('tekrar giriş') || err.contains('requires-recent-login');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(needsReauth ? _loc.t('DeleteAccountReauthNeeded') : err),
+          backgroundColor: const Color(0xFFEF4444),
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          duration: const Duration(seconds: 4),
+        ),
+      );
+      // Yeniden kimlik doğrulama gerekiyorsa kullanıcıyı login ekranına gönder
+      if (needsReauth) {
+        await _auth.signOut();
+        if (mounted) {
+          Navigator.of(context).pushAndRemoveUntil(
+            MaterialPageRoute(builder: (_) => const LoginScreen()),
+            (route) => false,
+          );
+        }
+      }
+    }
+  }
+}
+
+// ─── Hatırlatma Satırı (Ana / Ön) ───
+/// Solda renkli ikon rozetiyle başlık + açıklama, sağda trailing widget
+/// (saat butonu veya toggle) gösterir. Hatırlatma panelinin içinde kullanılır.
+class _ReminderRowCard extends StatelessWidget {
+  final Color accent;
+  final IconData icon;
+  final String title;
+  final String description;
+  final Widget trailing;
+  const _ReminderRowCard({
+    required this.accent,
+    required this.icon,
+    required this.title,
+    required this.description,
+    required this.trailing,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 10, 10, 10),
+      decoration: BoxDecoration(
+        color: accent.withValues(alpha: 0.06),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: accent.withValues(alpha: 0.2)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Container(
+            width: 36,
+            height: 36,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [
+                  accent.withValues(alpha: 0.32),
+                  accent.withValues(alpha: 0.18),
+                ],
+              ),
+              borderRadius: BorderRadius.circular(11),
+              border: Border.all(color: accent.withValues(alpha: 0.4)),
+            ),
+            child: Icon(icon, color: accent, size: 18),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 13.5,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  description,
+                  style: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.55),
+                    fontSize: 11,
+                    height: 1.35,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 6),
+          trailing,
+        ],
+      ),
+    );
+  }
 }
 
 // ─── Toggle Ayar Satırı ───
 class _SettingToggleRow extends StatelessWidget {
-  final IconData icon;
+  final IconData? icon;
+  final String? assetPath;
+  final double assetScale;
   final Color iconColor;
   final Color bgColor;
   final String label;
@@ -1007,14 +1869,16 @@ class _SettingToggleRow extends StatelessWidget {
   final ValueChanged<bool> onChanged;
 
   const _SettingToggleRow({
-    required this.icon,
+    this.icon,
+    this.assetPath,
+    this.assetScale = 1.0,
     required this.iconColor,
     required this.bgColor,
     required this.label,
     required this.subtitle,
     required this.value,
     required this.onChanged,
-  });
+  }) : assert(icon != null || assetPath != null);
 
   @override
   Widget build(BuildContext context) {
@@ -1022,14 +1886,30 @@ class _SettingToggleRow extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
       child: Row(
         children: [
-          Container(
+          SizedBox(
             width: 40,
             height: 40,
-            decoration: BoxDecoration(
-              color: bgColor,
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Icon(icon, color: iconColor, size: 20),
+            child: assetPath != null
+                ? ClipRRect(
+                    borderRadius: BorderRadius.circular(12),
+                    child: Transform.scale(
+                      scale: assetScale,
+                      child: Image.asset(
+                        assetPath!,
+                        width: 40,
+                        height: 40,
+                        fit: BoxFit.contain,
+                        filterQuality: FilterQuality.medium,
+                      ),
+                    ),
+                  )
+                : Container(
+                    decoration: BoxDecoration(
+                      color: bgColor,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Icon(icon!, color: iconColor, size: 20),
+                  ),
           ),
           const SizedBox(width: 14),
           Expanded(
@@ -1094,14 +1974,14 @@ class _ContactRow extends StatelessWidget {
   final IconData? icon;
   final FaIconData? faIcon;
   final Color iconColor;
-  final Color bgColor;
+  final Gradient? gradient;
   final String label;
   final VoidCallback onTap;
   const _ContactRow({
     this.icon,
     this.faIcon,
     required this.iconColor,
-    required this.bgColor,
+    this.gradient,
     required this.label,
     required this.onTap,
   }) : assert(icon != null || faIcon != null);
@@ -1112,27 +1992,48 @@ class _ContactRow extends StatelessWidget {
       onTap: onTap,
       behavior: HitTestBehavior.opaque,
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
         child: Row(
           children: [
             Container(
-              width: 40,
-              height: 40,
+              width: 42,
+              height: 42,
               decoration: BoxDecoration(
-                color: bgColor,
-                borderRadius: BorderRadius.circular(12),
+                gradient: gradient,
+                color: gradient == null ? Colors.white.withValues(alpha: 0.08) : null,
+                borderRadius: BorderRadius.circular(13),
+                boxShadow: gradient != null
+                    ? [
+                        BoxShadow(
+                          color: (gradient as LinearGradient).colors.last.withValues(alpha: 0.35),
+                          blurRadius: 10,
+                          offset: const Offset(0, 3),
+                        ),
+                      ]
+                    : null,
               ),
               child: Center(
                 child: faIcon != null
-                    ? FaIcon(faIcon!, color: iconColor, size: 18)
+                    ? FaIcon(faIcon!, color: iconColor, size: 17)
                     : Icon(icon!, color: iconColor, size: 20),
               ),
             ),
             const SizedBox(width: 16),
             Expanded(
-              child: Text(label, style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w500)),
+              child: Text(
+                label,
+                style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w500),
+              ),
             ),
-            Icon(Icons.chevron_right_rounded, color: Colors.white.withValues(alpha:0.2), size: 22),
+            Container(
+              width: 28,
+              height: 28,
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.05),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Icon(Icons.chevron_right_rounded, color: Colors.white.withValues(alpha: 0.3), size: 18),
+            ),
           ],
         ),
       ),
@@ -1155,7 +2056,10 @@ class _RowDivider extends StatelessWidget {
 // Uyku İstatistikleri Kartı
 // ══════════════════════════════════════════════════════════
 class _SleepStatsCard extends StatefulWidget {
-  const _SleepStatsCard();
+  /// Dialog modunda kapatma butonunu görünür yapar.
+  /// null ise sadece (i) ve refresh butonları gösterilir (eski inline davranış).
+  final VoidCallback? onClose;
+  const _SleepStatsCard({this.onClose});
 
   @override
   State<_SleepStatsCard> createState() => _SleepStatsCardState();
@@ -1184,6 +2088,11 @@ class _SleepStatsCardState extends State<_SleepStatsCard> {
     final h = minutes ~/ 60;
     final m = minutes % 60;
     return m > 0 ? '$h ${_loc.t('StatsHoursShort')} $m ${_loc.t('StatsMinLabel')}' : '$h ${_loc.t('StatsHoursShort')}';
+  }
+
+  String _formatPreferredHour(int hour) {
+    final h = hour.toString().padLeft(2, '0');
+    return '~$h:00';
   }
 
   String _dayLabel(int weekdayIndex) {
@@ -1240,6 +2149,17 @@ class _SleepStatsCardState extends State<_SleepStatsCard> {
                   onTap: _loadStats,
                   child: Icon(Icons.refresh_rounded, color: Colors.white.withValues(alpha: 0.3), size: 18),
                 ),
+                if (widget.onClose != null) ...[
+                  const SizedBox(width: 14),
+                  GestureDetector(
+                    onTap: widget.onClose,
+                    child: Icon(
+                      Icons.close_rounded,
+                      color: Colors.white.withValues(alpha: 0.55),
+                      size: 20,
+                    ),
+                  ),
+                ],
               ],
             ),
           ),
@@ -1277,7 +2197,11 @@ class _SleepStatsCardState extends State<_SleepStatsCard> {
             // ─── 7 Günlük Bar Grafik ───
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: _WeekBarChart(stats: _stats!, formatDuration: _formatDuration, dayLabel: _dayLabel),
+              child: _WeekBarChart(
+                stats: _stats!,
+                formatDuration: _formatDuration,
+                dayLabel: _dayLabel,
+              ),
             ),
             const SizedBox(height: 12),
 
@@ -1306,9 +2230,92 @@ class _SleepStatsCardState extends State<_SleepStatsCard> {
                     icon: Icons.show_chart_rounded,
                     color: const Color(0xFFFBBF24),
                   ),
+                  if (_stats!.preferredHour != null) ...[
+                    const SizedBox(width: 8),
+                    _StatChip(
+                      label: _loc.t('StatsPreferredTime'),
+                      value: _formatPreferredHour(_stats!.preferredHour!),
+                      icon: Icons.schedule_rounded,
+                      color: const Color(0xFFEC4899),
+                    ),
+                  ],
                 ],
               ),
             ),
+
+            // ─── En çok çalınan ses ───
+            if (_stats!.topSoundName != null && _stats!.topSoundName!.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF8B5CF6).withValues(alpha: 0.07),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: const Color(0xFF8B5CF6).withValues(alpha: 0.18)),
+                  ),
+                  child: Row(
+                    children: [
+                      const Text('🎵', style: TextStyle(fontSize: 14)),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              _loc.t('StatsTopSound'),
+                              style: TextStyle(
+                                color: Colors.white.withValues(alpha: 0.45),
+                                fontSize: 10,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                            Text(
+                              _stats!.topSoundName!,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ],
+                        ),
+                      ),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF8B5CF6).withValues(alpha: 0.18),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text(
+                          _formatDuration(_stats!.topSoundMinutes),
+                          style: const TextStyle(
+                            color: Color(0xFFB794F4),
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+
+            // ─── Bugünkü Uyutmalar ───
+            _TodayNapsSection(
+              sessions: _stats!.todaySessions,
+              loc: _loc,
+              formatDuration: _formatDuration,
+            ),
+
+            // ─── Saatlik Dağılım (24h mini histogram) ───
+            if (_stats!.hourHistogram.any((c) => c > 0))
+              _HourlyDistribution(
+                histogram: _stats!.hourHistogram,
+                loc: _loc,
+              ),
 
             // ─── Seri (streak) ───
             if (_stats!.streakDays > 1)
@@ -1341,8 +2348,296 @@ class _SleepStatsCardState extends State<_SleepStatsCard> {
   }
 }
 
-// ─── 7 Günlük Bar Grafik ───
-class _WeekBarChart extends StatelessWidget {
+// ════════════════════════════════════════════════════════
+// Bugünkü Uyutmalar — kronolojik liste (genişletilebilir)
+// ════════════════════════════════════════════════════════
+/// Varsayılan kapalı (collapsed) — başlık ve seans sayısı görünür.
+/// Başlığa tıklandığında animasyonlu olarak liste açılır/kapanır.
+class _TodayNapsSection extends StatefulWidget {
+  final List<SleepSession> sessions;
+  final LocalizationService loc;
+  final String Function(int) formatDuration;
+  const _TodayNapsSection({
+    required this.sessions,
+    required this.loc,
+    required this.formatDuration,
+  });
+
+  @override
+  State<_TodayNapsSection> createState() => _TodayNapsSectionState();
+}
+
+class _TodayNapsSectionState extends State<_TodayNapsSection>
+    with SingleTickerProviderStateMixin {
+  bool _expanded = false;
+
+  String _formatTime(DateTime dt) {
+    final l = dt.toLocal();
+    return '${l.hour.toString().padLeft(2, '0')}:${l.minute.toString().padLeft(2, '0')}';
+  }
+
+  void _toggle() {
+    setState(() => _expanded = !_expanded);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final sessions = widget.sessions;
+    final loc = widget.loc;
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+        decoration: BoxDecoration(
+          color: const Color(0xFF06B6D4).withValues(alpha: 0.07),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: const Color(0xFF06B6D4).withValues(alpha: 0.18)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // ── Başlık satırı (her zaman tıklanabilir) ──
+            GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: _toggle,
+              child: Row(
+                children: [
+                  const Icon(Icons.wb_twilight_rounded, color: Color(0xFF06B6D4), size: 16),
+                  const SizedBox(width: 6),
+                  Text(
+                    loc.t('StatsTodayNapsTitle'),
+                    style: const TextStyle(
+                      color: Color(0xFF67E8F9),
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const Spacer(),
+                  if (sessions.isNotEmpty)
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF06B6D4).withValues(alpha: 0.18),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Text(
+                        '${sessions.length} ${loc.t('StatsSessionsCount')}',
+                        style: const TextStyle(
+                          color: Color(0xFF67E8F9),
+                          fontSize: 10,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                  const SizedBox(width: 8),
+                  // Açılır/kapanır chevron — _expanded değişince 180° döner
+                  AnimatedRotation(
+                    turns: _expanded ? 0.5 : 0.0,
+                    duration: const Duration(milliseconds: 220),
+                    curve: Curves.easeOutCubic,
+                    child: Icon(
+                      Icons.keyboard_arrow_down_rounded,
+                      color: const Color(0xFF67E8F9).withValues(alpha: 0.85),
+                      size: 20,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            // ── İçerik (animasyonlu açılma/kapanma) ──
+            AnimatedSize(
+              duration: const Duration(milliseconds: 240),
+              curve: Curves.easeOutCubic,
+              alignment: Alignment.topCenter,
+              child: AnimatedSwitcher(
+                duration: const Duration(milliseconds: 200),
+                child: !_expanded
+                    ? const SizedBox.shrink()
+                    : Padding(
+                        padding: const EdgeInsets.only(top: 8),
+                        child: sessions.isEmpty
+                            ? Padding(
+                                padding: const EdgeInsets.symmetric(vertical: 4),
+                                child: Text(
+                                  loc.t('StatsNoNapsToday'),
+                                  style: TextStyle(
+                                    color: Colors.white.withValues(alpha: 0.4),
+                                    fontSize: 12,
+                                  ),
+                                ),
+                              )
+                            : Column(
+                                children: List.generate(sessions.length, (i) {
+                                  final s = sessions[i];
+                                  final start = _formatTime(s.startTime);
+                                  final end = _formatTime(s.endTime);
+                                  final isLast = i == sessions.length - 1;
+                                  return Padding(
+                                    padding: EdgeInsets.only(bottom: isLast ? 0 : 6),
+                                    child: Row(
+                                      children: [
+                                        // Saat çipi
+                                        Container(
+                                          width: 34,
+                                          height: 24,
+                                          alignment: Alignment.center,
+                                          decoration: BoxDecoration(
+                                            color: const Color(0xFF06B6D4).withValues(alpha: 0.18),
+                                            borderRadius: BorderRadius.circular(6),
+                                          ),
+                                          child: Text(
+                                            '${i + 1}.',
+                                            style: const TextStyle(
+                                              color: Color(0xFF67E8F9),
+                                              fontSize: 11,
+                                              fontWeight: FontWeight.w700,
+                                            ),
+                                          ),
+                                        ),
+                                        const SizedBox(width: 8),
+                                        // Başlangıç → bitiş
+                                        Expanded(
+                                          child: Text(
+                                            '$start → $end',
+                                            style: const TextStyle(
+                                              color: Colors.white,
+                                              fontSize: 12,
+                                              fontWeight: FontWeight.w600,
+                                            ),
+                                          ),
+                                        ),
+                                        // Süre
+                                        Text(
+                                          widget.formatDuration(s.durationMinutes),
+                                          style: TextStyle(
+                                            color: Colors.white.withValues(alpha: 0.6),
+                                            fontSize: 11,
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  );
+                                }),
+                              ),
+                      ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ════════════════════════════════════════════════════════
+// Saatlik Dağılım — 24h mini histogram
+// ════════════════════════════════════════════════════════
+class _HourlyDistribution extends StatelessWidget {
+  final List<int> histogram;
+  final LocalizationService loc;
+  const _HourlyDistribution({
+    required this.histogram,
+    required this.loc,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final maxCount = histogram.fold<int>(0, (m, v) => v > m ? v : m);
+    final currentHour = DateTime.now().hour;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+        decoration: BoxDecoration(
+          color: const Color(0xFFEC4899).withValues(alpha: 0.06),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: const Color(0xFFEC4899).withValues(alpha: 0.18)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.timeline_rounded, color: Color(0xFFEC4899), size: 16),
+                const SizedBox(width: 6),
+                Text(
+                  loc.t('StatsHourlyTitle'),
+                  style: const TextStyle(
+                    color: Color(0xFFF9A8D4),
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            // 24 saatlik bar
+            SizedBox(
+              height: 36,
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: List.generate(24, (h) {
+                  final c = histogram[h];
+                  final fraction = maxCount > 0 ? c / maxCount : 0.0;
+                  final barH = (fraction * 30).clamp(2.0, 30.0);
+                  final isCurrent = h == currentHour;
+                  return Expanded(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 1),
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.end,
+                        children: [
+                          AnimatedContainer(
+                            duration: Duration(milliseconds: 250 + h * 10),
+                            curve: Curves.easeOutCubic,
+                            height: c == 0 ? 2 : barH,
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(2),
+                              color: c == 0
+                                  ? Colors.white.withValues(alpha: isCurrent ? 0.18 : 0.06)
+                                  : isCurrent
+                                      ? const Color(0xFFEC4899)
+                                      : const Color(0xFFEC4899).withValues(alpha: 0.55),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
+                }),
+              ),
+            ),
+            const SizedBox(height: 4),
+            // Saat etiketleri (00, 06, 12, 18)
+            Row(
+              children: [
+                _hourLabel('00'),
+                Expanded(child: Center(child: _hourLabel('06'))),
+                Expanded(child: Center(child: _hourLabel('12'))),
+                Expanded(child: Center(child: _hourLabel('18'))),
+                _hourLabel('23'),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _hourLabel(String s) => Text(
+        s,
+        style: TextStyle(
+          color: Colors.white.withValues(alpha: 0.35),
+          fontSize: 9,
+          fontWeight: FontWeight.w600,
+        ),
+      );
+}
+
+// ─── 7 Günlük Bar Grafik (Gün seçilebilir) ───
+class _WeekBarChart extends StatefulWidget {
   final WeeklyStats stats;
   final String Function(int) formatDuration;
   final String Function(int) dayLabel;
@@ -1354,69 +2649,209 @@ class _WeekBarChart extends StatelessWidget {
   });
 
   @override
+  State<_WeekBarChart> createState() => _WeekBarChartState();
+}
+
+class _WeekBarChartState extends State<_WeekBarChart> {
+  int? _selectedDayIndex; // Seçili gün (null = seçim yok)
+
+  String _formatDate(String dateStr) {
+    try {
+      final dt = DateTime.parse('$dateStr 00:00:00');
+      return '${dt.day.toString().padLeft(2, '0')}.${dt.month.toString().padLeft(2, '0')}';
+    } catch (_) {
+      return dateStr;
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final maxMin = stats.days.fold(0, (m, d) => math.max(m, d.totalMinutes));
+    final maxMin = widget.stats.days.fold(0, (m, d) => math.max(m, d.totalMinutes));
     final today = DateTime.now();
+    final loc = LocalizationService();
 
-    return SizedBox(
-      height: 80,
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.end,
-        children: List.generate(7, (i) {
-          final day = stats.days[i];
-          final fraction = maxMin > 0 ? day.totalMinutes / maxMin : 0.0;
-          final barHeight = (fraction * 52).clamp(4.0, 52.0);
-          final isEmpty = day.totalMinutes == 0;
-          final isToday = day.date ==
-              '${today.year}-${today.month.toString().padLeft(2, '0')}-${today.day.toString().padLeft(2, '0')}';
+    return Column(
+      children: [
+        SizedBox(
+          height: 80,
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: List.generate(7, (i) {
+              final day = widget.stats.days[i];
+              final fraction = maxMin > 0 ? day.totalMinutes / maxMin : 0.0;
+              final barHeight = (fraction * 52).clamp(4.0, 52.0);
+              final isEmpty = day.totalMinutes == 0;
+              final isToday = day.date ==
+                  '${today.year}-${today.month.toString().padLeft(2, '0')}-${today.day.toString().padLeft(2, '0')}';
+              final isSelected = _selectedDayIndex == i;
 
-          // Haftanın günü (1=Pzt, 7=Paz)
-          final dt = DateTime.parse('${day.date} 00:00:00');
-          final wdLabel = dayLabel(dt.weekday);
+              // Haftanın günü (1=Pzt, 7=Paz)
+              final dt = DateTime.parse('${day.date} 00:00:00');
+              final wdLabel = widget.dayLabel(dt.weekday);
 
-          return Expanded(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.end,
-              children: [
-                AnimatedContainer(
-                  duration: Duration(milliseconds: 400 + i * 60),
-                  curve: Curves.easeOutCubic,
-                  height: isEmpty ? 4 : barHeight,
-                  margin: const EdgeInsets.symmetric(horizontal: 3),
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(6),
-                    color: isEmpty
-                        ? Colors.white.withValues(alpha: 0.07)
-                        : isToday
-                            ? AppColors.purple
-                            : AppColors.purple.withValues(alpha: 0.55),
-                    boxShadow: isEmpty
-                        ? null
-                        : [
-                            BoxShadow(
-                              color: AppColors.purple.withValues(alpha: 0.3),
-                              blurRadius: 6,
-                              offset: const Offset(0, 2),
-                            )
-                          ],
+              return Expanded(
+                child: GestureDetector(
+                  onTap: () {
+                    setState(() {
+                      _selectedDayIndex = _selectedDayIndex == i ? null : i;
+                    });
+                  },
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      AnimatedContainer(
+                        duration: Duration(milliseconds: 400 + i * 60),
+                        curve: Curves.easeOutCubic,
+                        height: isEmpty ? 4 : barHeight,
+                        margin: const EdgeInsets.symmetric(horizontal: 3),
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(6),
+                          color: isEmpty
+                              ? (isSelected ? Colors.white.withValues(alpha: 0.15) : Colors.white.withValues(alpha: 0.07))
+                              : isSelected
+                                  ? const Color(0xFF10B981)
+                                  : isToday
+                                      ? AppColors.purple
+                                      : AppColors.purple.withValues(alpha: 0.55),
+                          boxShadow: isEmpty
+                              ? null
+                              : [
+                                  BoxShadow(
+                                    color: (isSelected ? const Color(0xFF10B981) : AppColors.purple).withValues(alpha: 0.3),
+                                    blurRadius: 6,
+                                    offset: const Offset(0, 2),
+                                  )
+                                ],
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        wdLabel,
+                        style: TextStyle(
+                          color: isSelected
+                              ? const Color(0xFF10B981)
+                              : isToday
+                                  ? Colors.white
+                                  : Colors.white.withValues(alpha: 0.35),
+                          fontSize: 9,
+                          fontWeight: (isToday || isSelected) ? FontWeight.w700 : FontWeight.w400,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
-                const SizedBox(height: 4),
-                Text(
-                  wdLabel,
-                  style: TextStyle(
-                    color: isToday
-                        ? Colors.white
-                        : Colors.white.withValues(alpha: 0.35),
-                    fontSize: 9,
-                    fontWeight: isToday ? FontWeight.w700 : FontWeight.w400,
-                  ),
-                ),
-              ],
+              );
+            }),
+          ),
+        ),
+
+        // ─── Seçili Gün Detayı ───
+        if (_selectedDayIndex != null) ...[
+          const SizedBox(height: 10),
+          AnimatedContainer(
+            duration: const Duration(milliseconds: 250),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              color: const Color(0xFF10B981).withValues(alpha: 0.08),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: const Color(0xFF10B981).withValues(alpha: 0.2)),
             ),
-          );
-        }),
-      ),
+            child: Builder(builder: (context) {
+              final day = widget.stats.days[_selectedDayIndex!];
+              final dateLabel = _formatDate(day.date);
+              final dt = DateTime.parse('${day.date} 00:00:00');
+              final wdFull = widget.dayLabel(dt.weekday);
+              final daySessions = widget.stats.sessionsByDay[day.date] ?? const [];
+
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      // Tarih ve gün
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            '$wdFull · $dateLabel',
+                            style: const TextStyle(
+                              color: Color(0xFF10B981),
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            day.sessionCount == 0
+                                ? loc.t('StatsNoData')
+                                : '${day.sessionCount} ${loc.t('StatsSessionsCount')}',
+                            style: TextStyle(
+                              color: Colors.white.withValues(alpha: 0.5),
+                              fontSize: 10,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const Spacer(),
+                      // Toplam süre
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF10B981).withValues(alpha: 0.15),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text(
+                          day.totalMinutes > 0
+                              ? widget.formatDuration(day.totalMinutes)
+                              : '—',
+                          style: const TextStyle(
+                            color: Color(0xFF6EE7B7),
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  // ─── O güne ait oturum saatleri (drill-down) ───
+                  if (daySessions.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    Divider(
+                      color: const Color(0xFF10B981).withValues(alpha: 0.2),
+                      height: 1,
+                    ),
+                    const SizedBox(height: 6),
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 6,
+                      children: daySessions.map((s) {
+                        final l = s.startTime.toLocal();
+                        final h = l.hour.toString().padLeft(2, '0');
+                        final m = l.minute.toString().padLeft(2, '0');
+                        return Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF10B981).withValues(alpha: 0.15),
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Text(
+                            '$h:$m · ${widget.formatDuration(s.durationMinutes)}',
+                            style: const TextStyle(
+                              color: Color(0xFF6EE7B7),
+                              fontSize: 10,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        );
+                      }).toList(),
+                    ),
+                  ],
+                ],
+              );
+            }),
+          ),
+        ],
+      ],
     );
   }
 }
@@ -1558,56 +2993,74 @@ class _StatsInfoDialog extends StatelessWidget {
               ),
             ),
 
-            // ─── İçerik ───
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _InfoItem(
-                    title: loc.t('StatsInfoItem1Title'),
-                    description: loc.t('StatsInfoItem1Desc'),
-                    color: const Color(0xFF8B5CF6),
-                  ),
-                  const SizedBox(height: 12),
-                  _InfoItem(
-                    title: loc.t('StatsInfoItem2Title'),
-                    description: loc.t('StatsInfoItem2Desc'),
-                    color: const Color(0xFF3B82F6),
-                  ),
-                  const SizedBox(height: 12),
-                  _InfoItem(
-                    title: loc.t('StatsInfoItem3Title'),
-                    description: loc.t('StatsInfoItem3Desc'),
-                    color: const Color(0xFF10B981),
-                  ),
-                  const SizedBox(height: 12),
-                  _InfoItem(
-                    title: loc.t('StatsInfoItem4Title'),
-                    description: loc.t('StatsInfoItem4Desc'),
-                    color: const Color(0xFFFBBF24),
-                  ),
-                  const SizedBox(height: 16),
-
-                  // ─── Dipnot ───
-                  Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withValues(alpha: 0.03),
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: Colors.white.withValues(alpha: 0.07)),
+            // ─── İçerik (scrollable) ───
+            // Flexible + SingleChildScrollView: header ve close butonu sabit,
+            // ortadaki info item'lar uzun olduğunda kullanıcı scroll edebiliyor.
+            // Aksi takdirde 6 item + dipnot ekrandan taşıyor (özellikle küçük
+            // cihazlarda veya dil çevirisi uzun olan yerlerde).
+            Flexible(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _InfoItem(
+                      title: loc.t('StatsInfoItem1Title'),
+                      description: loc.t('StatsInfoItem1Desc'),
+                      color: const Color(0xFF8B5CF6),
                     ),
-                    child: Text(
-                      loc.t('StatsInfoNote'),
-                      style: TextStyle(
-                        color: Colors.white.withValues(alpha: 0.45),
-                        fontSize: 11,
-                        height: 1.5,
+                    const SizedBox(height: 12),
+                    _InfoItem(
+                      title: loc.t('StatsInfoItem2Title'),
+                      description: loc.t('StatsInfoItem2Desc'),
+                      color: const Color(0xFF3B82F6),
+                    ),
+                    const SizedBox(height: 12),
+                    _InfoItem(
+                      title: loc.t('StatsInfoItem3Title'),
+                      description: loc.t('StatsInfoItem3Desc'),
+                      color: const Color(0xFF10B981),
+                    ),
+                    const SizedBox(height: 12),
+                    _InfoItem(
+                      title: loc.t('StatsInfoItem4Title'),
+                      description: loc.t('StatsInfoItem4Desc'),
+                      color: const Color(0xFFFBBF24),
+                    ),
+                    const SizedBox(height: 12),
+                    _InfoItem(
+                      title: loc.t('StatsInfoItem5Title'),
+                      description: loc.t('StatsInfoItem5Desc'),
+                      color: const Color(0xFF06B6D4),
+                    ),
+                    const SizedBox(height: 12),
+                    _InfoItem(
+                      title: loc.t('StatsInfoItem6Title'),
+                      description: loc.t('StatsInfoItem6Desc'),
+                      color: const Color(0xFFEC4899),
+                    ),
+                    const SizedBox(height: 16),
+
+                    // ─── Dipnot ───
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: 0.03),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: Colors.white.withValues(alpha: 0.07)),
+                      ),
+                      child: Text(
+                        loc.t('StatsInfoNote'),
+                        style: TextStyle(
+                          color: Colors.white.withValues(alpha: 0.45),
+                          fontSize: 12,
+                          height: 1.5,
+                        ),
                       ),
                     ),
-                  ),
-                  const SizedBox(height: 16),
-                ],
+                    const SizedBox(height: 16),
+                  ],
+                ),
               ),
             ),
 
@@ -1704,7 +3157,7 @@ class _InfoItem extends StatelessWidget {
                   description,
                   style: TextStyle(
                     color: Colors.white.withValues(alpha: 0.5),
-                    fontSize: 11,
+                    fontSize: 13,
                     height: 1.45,
                   ),
                 ),

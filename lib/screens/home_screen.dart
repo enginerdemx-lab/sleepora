@@ -3,6 +3,7 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'dart:math';
 
+import 'package:audio_session/audio_session.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../theme/app_theme.dart';
@@ -33,7 +34,7 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   final _loc = LocalizationService();
   int _currentIndex = 0;
   Sound? _playingSound;
@@ -48,18 +49,45 @@ class _HomeScreenState extends State<HomeScreen> {
   String _babyName = '';
 
   // Tek ses player'lar (Crossfade loop için iki tane)
-  final AudioPlayer _audioPlayer1 = AudioPlayer();
-  final AudioPlayer _audioPlayer2 = AudioPlayer();
+  //
+  // handleInterruptions: false — ÇOK ÖNEMLİ.
+  // just_audio varsayılan olarak interruption'ları kendi ele alır:
+  // interruption.begin'de pause(), interruption.end'de (pause tipi ise)
+  // otomatik play() çağırır. Bu, bizim manuel interruption handler'ımızla
+  // çakışıp state desync yaratıyor — Instagram videosu bitince ses
+  // arka planda devam ediyor ama UI "durdu" zannediyordu, sonuçta
+  // pause butonu (idempotent guard nedeniyle) işlevsiz hale geliyordu.
+  // Tüm interruption yönetimi _initAudioSessionListener tarafından yapılıyor.
+  final AudioPlayer _audioPlayer1 = AudioPlayer(handleInterruptions: false);
+  final AudioPlayer _audioPlayer2 = AudioPlayer(handleInterruptions: false);
   int _activePlayerIndex = 1; // 1 veya 2
   StreamSubscription? _positionSub;
+  StreamSubscription? _completionSub; // Ses bitince fallback için
   bool _isCrossfading = false;
-  static const int _crossfadeDurationMs = 2500; // 2.5 saniye crossfade
+  // 5 saniyelik crossfade — kabin sesi gibi loop'u belli olan ambiyans
+  // dosyalarında geçişi tamamen örter. Equal-power eğrisi ile birlikte
+  // dinleyici "tek sürekli ses" hissi alır.
+  static const int _crossfadeDurationMs = 5000;
+
+  // Fade operasyonlarını iptal etmek için nesil sayacı
+  // Her yeni ses başladığında/durduğunda artırılır.
+  // Eski fade coroutine'leri bu sayacı kontrol edip kendini iptal eder.
+  int _audioGen = 0;
 
   // Mixer player'lar — her ses için ayrı player
   final List<AudioPlayer> _mixerPlayers = [];
+  // Her mixer player için completed event listener'ı.
+  // Bazı MP3'lerde (kabin sesi, yol sesi gibi başında/sonunda az silence
+  // olan dosyalar) native LoopMode.one gap bırakıyor — ses bir an kapanıp
+  // yeniden başlıyor. completed yakalanınca volume'ü düşürüp başa sarıyor
+  // ve hızlıca fade-in yapıyoruz: kesinti çok daha az fark ediliyor.
+  final List<StreamSubscription> _mixerLoopSubs = [];
 
   // FavoritesScreen'e erişim için GlobalKey
   final GlobalKey<FavoritesScreenState> _favoritesKey = GlobalKey<FavoritesScreenState>();
+
+  // RecordScreen'e erişim için GlobalKey — playback'i durdurabilmek için
+  final GlobalKey<RecordScreenState> _recordKey = GlobalKey<RecordScreenState>();
 
   // Shuffle (Karışık Çalma) state'leri
   bool _isShufflePlaying = false;
@@ -70,6 +98,27 @@ class _HomeScreenState extends State<HomeScreen> {
 
   // Kilit ekranı handler'ına kısa yol — singleton üzerinden
   SleepAudioHandler? get _audioHandler => SleepAudioHandler.instance;
+
+  // AudioSession interruption listener
+  StreamSubscription? _interruptionSub;
+
+  // ─── Audio watchdog ───
+  // Bazı durumlarda (iOS audio route sessizce düşmesi, native LoopMode.one'ın
+  // tetiklenmemesi, başka uygulamadan gelen "sessiz" ses çakışmaları)
+  // UI çalıyor görünür ama hoparlörden ses çıkmaz. Periyodik bekçi
+  // her 5 saniyede mevcut modu kontrol eder: UI "çalıyor" diyorsa ama
+  // ilgili player gerçekten çalmıyorsa otomatik olarak kurtarır.
+  Timer? _watchdogTimer;
+  // Watchdog'un aynı saniyede ardışık reload yapmasını engellemek için
+  // son kurtarma denemesinin zamanı.
+  DateTime? _lastWatchdogRecovery;
+
+  // Kesinti başlamadan önceki çalma durumu — kesinti bitince otomatik
+  // devam ettirmek için saklanır (ör: Instagram videosu kapandığında
+  // ses kaldığı yerden devam etsin).
+  bool _wasPlayingBeforeInterruption = false;
+  ActivePlayer _modeBeforeInterruption = ActivePlayer.none;
+
 
   // ─── Premium ses önizleme (Preview) ───
   bool _isPreviewMode = false;
@@ -85,6 +134,266 @@ class _HomeScreenState extends State<HomeScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       ReviewService.showReviewDialog(context);
     });
+    _initAudioSessionListener();
+    _startWatchdog();
+    // App background/foreground geçişlerini dinle — iOS bazen background'dan
+    // dönerken AVAudioSession'ı sessizce düşürür; resumed'de zorla reaktive
+    // ediyoruz ve watchdog'u hemen tetikleyerek sessiz player'ları kurtarıyoruz.
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    if (state == AppLifecycleState.resumed) {
+      _onAppResumed();
+    }
+  }
+
+  /// App background'dan foreground'a döndüğünde çağrılır.
+  ///
+  /// iOS özelinde: AVAudioSession bazen background'da sessizce deactive
+  /// edilebiliyor (başka uygulamadan dönüş, kısa süreli sistem sesleri,
+  /// Control Center açıp kapatma, vs.). UI hâlâ "çalıyor" gösterirken
+  /// hoparlörden ses gelmez. Burada:
+  ///   1) Audio session'ı yeniden aktive et
+  ///   2) Watchdog'u zaman beklemeden hemen tetikle (cooldown'u bypass et)
+  Future<void> _onAppResumed() async {
+    // Audio session'ı zorla aktive et
+    try {
+      final session = await AudioSession.instance;
+      await session.setActive(true);
+    } catch (e) {
+      debugPrint('⚠️ AppLifecycle resumed → session reaktive hatası: $e');
+    }
+
+    if (!mounted) return;
+    // Watchdog'u cooldown beklemeden tetikle — eğer UI playing ama player
+    // sessizse anında kurtar.
+    _lastWatchdogRecovery = null; // cooldown reset
+    try {
+      await _runWatchdogCheck();
+    } catch (e) {
+      debugPrint('⚠️ AppLifecycle resumed → watchdog hatası: $e');
+    }
+  }
+
+  /// Başka bir uygulama ses aldığında (iOS interruption) hem UI'ı hem de
+  /// gerçek player'ları senkronize eder.
+  ///
+  /// Mantık:
+  /// 1) Kesinti başladığında: ne çalıyorsa hatırla, TÜM player'lara fiziksel
+  ///    pause() çağır, UI state'i kapat.
+  /// 2) Kesinti bittiğinde: eğer iOS "pause" tipinde kesinti raporladıysa
+  ///    (yani devam etmeye izin var — örn. Instagram videosu kapandı),
+  ///    daha önce çalan modu otomatik yeniden başlat.
+  ///    `AudioInterruptionType.unknown` geldiğinde devam ettirme (sistem
+  ///    kesin bir hint vermemiş).
+  ///
+  /// NOT: `handleInterruptions: false` ile oluşturulan `AudioPlayer`'lar
+  /// just_audio'nun kendi auto-resume mekanizmasını kullanmıyor, bu yüzden
+  /// buradaki manuel kontrol state desync'e yol açmıyor.
+  void _initAudioSessionListener() {
+    AudioSession.instance.then((session) {
+      _interruptionSub = session.interruptionEventStream.listen((event) async {
+        if (!mounted) return;
+        if (event.begin) {
+          final wasPlaying = _isPlaying || _mixerPlaying || _isShufflePlaying;
+          if (!wasPlaying) return;
+
+          // Kesinti öncesi durumu sakla — end'de otomatik devam için.
+          _wasPlayingBeforeInterruption = true;
+          _modeBeforeInterruption = _activePlayer;
+
+          // Crossfade ve shuffle zamanlayıcılarını durdur — arka planda
+          // tetiklenip pause sonrası player'ları uyandırmasınlar.
+          _stopCrossfadeLoop();
+          _shuffleChangeTimer?.cancel();
+          _shuffleMasterTimer?.cancel();
+
+          // Tek ses / crossfade player'larını fiziksel olarak duraklat.
+          try { await _audioPlayer1.pause(); } catch (_) {}
+          try { await _audioPlayer2.pause(); } catch (_) {}
+
+          // Mixer player'larının her birini duraklat.
+          for (final p in _mixerPlayers) {
+            try { await p.pause(); } catch (_) {}
+          }
+
+          if (!mounted) return;
+          setState(() {
+            _isPlaying = false;
+            _mixerPlaying = false;
+            _isShufflePlaying = false;
+            if (_playingSound != null) _playingSound!.isPlaying = false;
+          });
+          _syncNowPlaying();
+        } else {
+          // event.end — kesinti bitti (ör: Instagram videosu kapandı).
+          if (!_wasPlayingBeforeInterruption) return;
+
+          // iOS "pause" tipinde kesinti bildirmişse resume güvenli.
+          // "unknown"/"duck" durumunda sistem hint vermediği için
+          // otomatik devam ettirmiyoruz (kullanıcı yine de Play'e basabilir).
+          if (event.type != AudioInterruptionType.pause) {
+            _wasPlayingBeforeInterruption = false;
+            _modeBeforeInterruption = ActivePlayer.none;
+            return;
+          }
+
+          final savedMode = _modeBeforeInterruption;
+          _wasPlayingBeforeInterruption = false;
+          _modeBeforeInterruption = ActivePlayer.none;
+
+          // iOS'ta resume öncesi session'ı yeniden aktive et.
+          try {
+            await session.setActive(true);
+          } catch (_) {}
+
+          // Kesinti öncesi hangi mod çalıyorsa onu devam ettir.
+          // AWAIT şart — resume async olduğu için awaitsiz çağırsak callback
+          // hemen "tamam" sayılır, hata silently yutulur.
+          try {
+            switch (savedMode) {
+              case ActivePlayer.single:
+                await _resumePlayback();
+                break;
+              case ActivePlayer.mixer:
+                await _resumeMixerPlayback();
+                break;
+              case ActivePlayer.shuffle:
+                await _resumeShufflePlayback();
+                break;
+              case ActivePlayer.none:
+                break;
+            }
+          } catch (e) {
+            debugPrint('⚠️ Interruption sonrası resume hatası: $e');
+          }
+        }
+      });
+    });
+  }
+
+  // ─── Audio Watchdog ───
+  // UI "çalıyor" gösterdiği halde gerçekte hoparlörden ses çıkmıyorsa
+  // periyodik olarak kurtarma uygular. Sebepler:
+  //  • iOS AVPlayer audio route'unun sessizce düşmesi (telefon görüşmesi,
+  //    Siri, başka uygulama ile çakışma)
+  //  • just_audio'nun bazı MP3'lerde processingState=completed sonrası
+  //    yeniden tetiklenmemesi
+  //  • Crossfade race condition'ları
+  //
+  // 5 saniyede bir tetiklenir. Hiçbir şey çalmıyorsa no-op.
+  void _startWatchdog() {
+    _watchdogTimer?.cancel();
+    _watchdogTimer = Timer.periodic(const Duration(seconds: 5), (_) async {
+      if (!mounted) return;
+      try { await _runWatchdogCheck(); } catch (e) {
+        debugPrint('Watchdog hatası: $e');
+      }
+    });
+  }
+
+  Future<void> _runWatchdogCheck() async {
+    // Kesinti aktifken ya da preview modunda iken karışma —
+    // o yollar zaten kendi state'lerini yönetiyor.
+    if (_isPreviewMode) return;
+    if (_wasPlayingBeforeInterruption) return;
+
+    // Cooldown: 3sn (eskiden 8sn idi). Çok kısa olursa hard reload'lar
+    // birbirini izler ve ses tamamen kesilir; çok uzun olursa sessizlik
+    // hissedilir. 3sn pratik denge.
+    final now = DateTime.now();
+    if (_lastWatchdogRecovery != null &&
+        now.difference(_lastWatchdogRecovery!).inSeconds < 3) {
+      return;
+    }
+
+    // ── Tek ses modu ──
+    if (_activePlayer == ActivePlayer.single && _isPlaying && !_isCrossfading) {
+      final active = _activePlayerIndex == 1 ? _audioPlayer1 : _audioPlayer2;
+      final ps = active.processingState;
+      final actuallyPlaying = active.playing;
+
+      // İzin verilen geçici durumlar — bekçi karışmaz
+      if (ps == ProcessingState.loading || ps == ProcessingState.buffering) return;
+
+      if (!actuallyPlaying || ps == ProcessingState.completed || ps == ProcessingState.idle) {
+        debugPrint('🐶 Watchdog: tek ses sessiz (state=$ps, playing=$actuallyPlaying) — hard reload');
+        _lastWatchdogRecovery = now;
+        try {
+          await _hardResumePlaybackAfterAd();
+        } catch (e) {
+          debugPrint('Watchdog tek ses kurtarma hatası: $e');
+          // Hard reload başarısızsa cooldown'ı sıfırla — bir sonraki tick
+          // hemen tekrar denesin.
+          _lastWatchdogRecovery = null;
+        }
+      }
+      return;
+    }
+
+    // ── Mixer modu ──
+    if (_activePlayer == ActivePlayer.mixer && _mixerPlaying && _mixerPlayers.isNotEmpty) {
+      bool needRecover = false;
+      for (final p in _mixerPlayers) {
+        final ps = p.processingState;
+        if (ps == ProcessingState.loading || ps == ProcessingState.buffering) continue;
+        if (!p.playing || ps == ProcessingState.idle) {
+          needRecover = true;
+          break;
+        }
+      }
+      if (needRecover) {
+        debugPrint('🐶 Watchdog: mixer player(lar)ı sessiz — yeniden başlatma');
+        _lastWatchdogRecovery = now;
+        // Önce yumuşak deneme: tek tek play() çağır
+        bool stillBroken = false;
+        for (final p in _mixerPlayers) {
+          if (!p.playing) {
+            try { await p.play(); } catch (_) { stillBroken = true; }
+          }
+        }
+        // Hâlâ düzelmediyse hard reload — audio session + tam yeniden kurulum.
+        if (stillBroken && _mixerSelected.isNotEmpty) {
+          try {
+            await _hardResumeMixerAfterAd();
+          } catch (e) {
+            debugPrint('Watchdog mixer hard reload hatası: $e');
+            _lastWatchdogRecovery = null;
+          }
+        }
+      }
+      return;
+    }
+
+    // ── Shuffle modu ──
+    if (_activePlayer == ActivePlayer.shuffle && _isShufflePlaying) {
+      final active = _activePlayerIndex == 1 ? _audioPlayer1 : _audioPlayer2;
+      final ps = active.processingState;
+      if (ps == ProcessingState.loading || ps == ProcessingState.buffering) return;
+      if (!active.playing || ps == ProcessingState.idle) {
+        debugPrint('🐶 Watchdog: shuffle player sessiz — kurtarma');
+        _lastWatchdogRecovery = now;
+        try {
+          try {
+            final session = await AudioSession.instance;
+            await session.setActive(true);
+          } catch (_) {}
+          // Önce yumuşak play denemesi
+          await active.play();
+          // Hâlâ çalmıyorsa hard reload (yeni şarkıya geç)
+          await Future.delayed(const Duration(milliseconds: 200));
+          if (!active.playing) {
+            await _hardResumeShuffleAfterAd();
+          }
+        } catch (e) {
+          debugPrint('Watchdog shuffle kurtarma hatası: $e');
+          _lastWatchdogRecovery = null;
+        }
+      }
+    }
   }
 
   /// Kilit ekranı / Kontrol Merkezi'ni günceller.
@@ -96,41 +405,64 @@ class _HomeScreenState extends State<HomeScreen> {
     switch (_activePlayer) {
       case ActivePlayer.single:
         if (_playingSound != null) {
-          h.onPlayPause = _togglePlayPause;
+          h.onPlay = _resumePlayback;
+          h.onPause = _pausePlayback;
           h.onStop = _closePlayer;
           h.onSkipToNext = _playNextSound;
           h.onSkipToPrevious = _playPreviousSound;
+          // Reklam sonrası hard reload — tek ses modunda iOS audio
+          // route'unu zorla yeniden kuruyor (bkz. _hardResumePlaybackAfterAd).
+          h.onResumeAfterAd = _hardResumePlaybackAfterAd;
           h.updateNowPlaying(
             title: _playingSound!.localizedName,
             isPlaying: _isPlaying,
+            artworkAssetPath: _playingSound!.artworkPath,
           );
         }
       case ActivePlayer.mixer:
-        h.onPlayPause = _toggleMixerPlay;
+        h.onPlay = _resumeMixerPlayback;
+        h.onPause = _pauseMixerPlayback;
         h.onStop = _closeMixerPlayer;
         h.onSkipToNext = null;
         h.onSkipToPrevious = null;
+        // Mixer için ÖZEL hard-resume — _resumeMixerPlayback `if (_mixerPlaying)
+        // return` guard'ına sahip; reklam sonrası iOS audio route düşmüşse
+        // sadece setActive+play yetmez. _hardResumeMixerAfterAd guard'ı bypass
+        // edip tam yeniden başlatma yapar.
+        h.onResumeAfterAd = _hardResumeMixerAfterAd;
         h.updateNowPlaying(
-          title: _mixerLabel ?? 'Karıştırıcı',
+          title: _mixerLabel ?? _loc.t('MixerTitle'),
           isPlaying: _mixerPlaying,
+          // Mixer için varsayılan logo (artworkAssetPath: null)
         );
       case ActivePlayer.shuffle:
-        h.onPlayPause = _toggleShufflePlayPause;
+        h.onPlay = _resumeShufflePlayback;
+        h.onPause = _pauseShufflePlayback;
         h.onStop = _stopShuffle;
         h.onSkipToNext = null;
         h.onSkipToPrevious = null;
-        h.updateNowPlaying(title: 'Karışık Çalma', isPlaying: true);
+        // Shuffle için de hard-resume — yeni şarkıya geçerek audio route'u
+        // sıfırlar; reklam sonrası sessizlik yaşanmaz.
+        h.onResumeAfterAd = _hardResumeShuffleAfterAd;
+        // Shuffle modunda o an çalan sesin kendi artwork'ünü göster
+        h.updateNowPlaying(
+          title: _loc.t('ShufflePlay'),
+          isPlaying: _isShufflePlaying,
+          artworkAssetPath: _playingSound?.artworkPath,
+        );
       case ActivePlayer.none:
-        h.onPlayPause = null;
+        h.onPlay = null;
+        h.onPause = null;
         h.onStop = null;
         h.onSkipToNext = null;
         h.onSkipToPrevious = null;
+        h.onResumeAfterAd = null;
         h.updateNowPlaying(title: '', isPlaying: false);
     }
   }
 
   /// Kilit ekranından sonraki sese geç
-  void _playNextSound() {
+  Future<void> _playNextSound() async {
     if (_playingSound == null) return;
     final currentIdx = allSounds.indexOf(_playingSound!);
     if (currentIdx < 0) return;
@@ -148,7 +480,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   /// Kilit ekranından önceki sese dön
-  void _playPreviousSound() {
+  Future<void> _playPreviousSound() async {
     if (_playingSound == null) return;
     final currentIdx = allSounds.indexOf(_playingSound!);
     if (currentIdx < 0) return;
@@ -182,7 +514,12 @@ class _HomeScreenState extends State<HomeScreen> {
 
   AudioPlayer get _primaryPlayer => _activePlayerIndex == 1 ? _audioPlayer1 : _audioPlayer2;
   AudioPlayer get _secondaryPlayer => _activePlayerIndex == 1 ? _audioPlayer2 : _audioPlayer1;
-  bool get _isPlayingSavedMix => _mixerLabel != null && !_mixerLabel!.startsWith('Karıştırıcı');
+  bool get _isPlayingSavedMix {
+    // Mixer auto-generated label'larından (her dilde) farklıysa kayıtlı bir mix çalınıyor demektir.
+    if (_mixerLabel == null) return false;
+    final mixerBase = _loc.t('MixerTitle');
+    return !_mixerLabel!.startsWith(mixerBase);
+  }
   // FavoritesScreen içindeki sekme 2 (Karıştırıcı) açık mı?
   bool get _isMixerTabActive => _currentIndex == 1 && (_favoritesKey.currentState?.isMixerTab ?? false);
 
@@ -191,9 +528,13 @@ class _HomeScreenState extends State<HomeScreen> {
     _loc.removeListener(_onLanguageChanged);
     SubscriptionService().removeListener(_onLanguageChanged);
     _positionSub?.cancel();
+    _completionSub?.cancel();
+    _interruptionSub?.cancel();
     _previewTimer?.cancel();
     _shuffleChangeTimer?.cancel();
     _shuffleMasterTimer?.cancel();
+    _watchdogTimer?.cancel();
+    WidgetsBinding.instance.removeObserver(this);
     _audioPlayer1.dispose();
     _audioPlayer2.dispose();
     for (final p in _mixerPlayers) {
@@ -203,21 +544,27 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   // ─── Tüm sesleri temizle (ortak yardımcı) ───
-  void _clearAllSounds() async {
+  //
+  // ÖNEMLİ: Bu fonksiyon `Future<void>` döner — çağıran yer await ETMELİ.
+  // Eskiden `void async` idi ve çoğu yerde await edilmiyordu, bu da yarış
+  // durumuna yol açıyordu: mixer player'lar arka planda silinirken yeni
+  // setAsset/play çağrılıyordu → ses gelmiyor, watchdog 5sn sonra fark
+  // ediyordu.
+  Future<void> _clearAllSounds() async {
     _stopCrossfadeLoop();
     _playingSound?.isPlaying = false;
     _playingSound = null;
     _isPlaying = false;
-    
+
     // Mixeri kapat
     if (_mixerPlaying) {
       await _stopMixerPlayers();
       _mixerPlaying = false;
     }
-    
+
     // Shuffle'ı kapat
     if (_isShufflePlaying) {
-      _stopShuffle();
+      await _stopShuffle();
     }
   }
 
@@ -232,12 +579,19 @@ class _HomeScreenState extends State<HomeScreen> {
       isPreview = true;
     }
 
-    // Tüm diğer modları temizle
+    // Ses başlayacaksa RecordScreen'deki geri dinlemeyi durdur
     if (sound != null) {
-      _clearAllSounds();
+      _recordKey.currentState?.stopPlayback();
+    }
+
+    // Tüm diğer modları temizle — AWAIT şart, yoksa mixer dispose ile yeni
+    // setAsset paralel koşar → ses gelmeyebilir.
+    if (sound != null) {
+      await _clearAllSounds();
     }
 
     setState(() {
+      _playingSound?.isPlaying = false; // eski seçili kartı hemen bırak
       _playingSound = sound;
       _isPlaying = sound != null;
       _miniPlayerCollapsed = false;
@@ -251,6 +605,8 @@ class _HomeScreenState extends State<HomeScreen> {
     if (sound != null) {
       // Uyku takibini başlat (sadece gerçek oturumlar — preview hariç)
       if (!isPreview) {
+        // Ses geçişinde önce mevcut oturumu kapat — yoksa üzerine yazılıp kaybolur
+        await SleepTrackingService().endSession();
         SleepTrackingService().startSession(sound.name);
       }
       // Preview timer'ı hemen başlat — async ses yüklenmesini bekleme,
@@ -259,20 +615,46 @@ class _HomeScreenState extends State<HomeScreen> {
         _startPreviewTimer(sound);
       }
       try {
+        // Her iki player'ı da kesin durdur — crossfade sonucu player2
+        // aktif kalmış olabilir, yeni ses yüklenirken arka planda çalmasın.
+        try { await _audioPlayer1.stop(); } catch (_) {}
+        try { await _audioPlayer2.stop(); } catch (_) {}
         _activePlayerIndex = 1;
-        await _audioPlayer1.setAsset(sound.assetPath);
-        // Preview modunda loop kapalı — timer bitince zaten durduruluyor
-        await _audioPlayer1.setLoopMode(isPreview ? LoopMode.off : LoopMode.one);
-        await _audioPlayer1.setVolume(1.0);
+        if (sound.assetPath.startsWith('assets/')) {
+          await _audioPlayer1.setAsset(sound.assetPath);
+        } else {
+          await _audioPlayer1.setFilePath(sound.assetPath);
+        }
+        // LoopMode.one: Native gapless loop güvenlik ağı.
+        // Crossfade başarılı olursa outgoing player durdurulur,
+        // başarısız olursa LoopMode.one sessiz geçiş sağlar.
+        // Preview modunda da one — timer zaten durduruyor.
+        await _audioPlayer1.setLoopMode(LoopMode.one);
+        final playGen = ++_audioGen; // yeni nesil — eski fade'leri iptal eder
+        // iOS sorunu: fade-out sonrası player volume=0'da kalır.
+        // play() 0 volume ile çağrılırsa iOS audio graph'ı aktive etmez → setVolume çalışmaz.
+        // Çözüm: play() öncesi volume'ü 1.0'a resetle → iOS düzgün aktive olur,
+        // hemen ardından 0.0'a çek → fade-in sorunsuz çalışır.
+        await _audioPlayer1.setVolume(1.0); // reset: iOS session'ı zorla aktive et
         await _audioPlayer1.play();
+        await _audioPlayer1.setVolume(0.0); // hemen mute, fade-in halleder
+        // Crossfade loop'unu başlat — ses bitmeden ~2.5 sn önce crossfade yapar
+        if (!isPreview) {
+          _startCrossfadeLoop(sound);
+        }
+        // Fade-in: arka planda sesi aç
+        _fadeInPlayer(_audioPlayer1, gen: playGen, durationMs: 300);
       } catch (e) {
         debugPrint('Ses hatası: $e');
       }
     } else {
-      // Ses durduruldu — uyku oturumunu kaydet
+      // Ses durduruldu — önce fade-out, sonra durdur
       SleepTrackingService().endSession();
-      try { await _audioPlayer1.stop(); } catch (_) {}
-      try { await _audioPlayer2.stop(); } catch (_) {}
+      final stopGen = ++_audioGen; // eski fade-in varsa iptal et
+      await Future.wait([
+        _fadeOutAndStop(_audioPlayer1, gen: stopGen),
+        _fadeOutAndStop(_audioPlayer2, gen: stopGen),
+      ]);
     }
   }
 
@@ -329,16 +711,62 @@ class _HomeScreenState extends State<HomeScreen> {
   void _stopCrossfadeLoop() {
     _positionSub?.cancel();
     _positionSub = null;
+    _completionSub?.cancel();
+    _completionSub = null;
     _isCrossfading = false;
   }
 
-  /// Crossfade loop: aktif player'ın pozisyonunu dinle, bitmesine yakın crossfade yap
+  // ─── Fade-in: ses yavaşça açılır (fire-and-forget) ───
+  // [gen] parametresi nesil sayacıdır; mevcut nesille eşleşmezse iptal olur.
+  Future<void> _fadeInPlayer(AudioPlayer player, {int durationMs = 300, required int gen}) async {
+    const steps = 15;
+    final stepMs = durationMs ~/ steps;
+    for (int i = 1; i <= steps; i++) {
+      if (!mounted || _audioGen != gen) return; // iptal: yeni ses başladı
+      await Future.delayed(Duration(milliseconds: stepMs));
+      if (!mounted || _audioGen != gen) return;
+      try {
+        await player.setVolume((i / steps).clamp(0.0, 1.0));
+      } catch (_) { /* Bir adım başarısız olsa da devam et */ }
+    }
+    // Fade bittiğinde volume kesin olarak 1.0 olsun
+    if (mounted && _audioGen == gen) {
+      try { await player.setVolume(1.0); } catch (_) {}
+    }
+  }
+
+  // ─── Fade-out + stop: ses yavaşça kapanır sonra durur ───
+  // [gen] parametresi nesil sayacıdır; mevcut nesille eşleşmezse stop çağırmadan çıkar.
+  Future<void> _fadeOutAndStop(AudioPlayer player, {int durationMs = 700, required int gen}) async {
+    const steps = 12;
+    final stepMs = durationMs ~/ steps;
+    final startVol = player.volume;
+    if (startVol <= 0.01) {
+      if (_audioGen == gen) try { await player.stop(); } catch (_) {}
+      return;
+    }
+    for (int i = 1; i <= steps; i++) {
+      if (_audioGen != gen) return; // iptal: yeni ses başladı, stop çağırma
+      await Future.delayed(Duration(milliseconds: stepMs));
+      if (_audioGen != gen) return;
+      try {
+        await player.setVolume((startVol * (1.0 - i / steps)).clamp(0.0, 1.0));
+      } catch (_) { break; }
+    }
+    if (_audioGen == gen) try { await player.stop(); } catch (_) {}
+  }
+
+  /// Crossfade loop: aktif player'ın pozisyonunu dinle, bitmesine yakın crossfade yap.
+  /// LoopMode.one aktif olduğundan, crossfade kaçırılırsa native loop devralır (sessiz geçiş).
   void _startCrossfadeLoop(Sound sound) {
     _positionSub?.cancel();
+    _completionSub?.cancel();
     final active = _activePlayerIndex == 1 ? _audioPlayer1 : _audioPlayer2;
 
     _positionSub = active.positionStream.listen((position) async {
       if (!_isPlaying || _playingSound != sound || _isCrossfading) return;
+      // İlk 3 saniyede crossfade tetikleme — henüz yükleniyor olabilir
+      if (position.inMilliseconds < 3000) return;
 
       final duration = active.duration;
       if (duration == null) return;
@@ -348,36 +776,79 @@ class _HomeScreenState extends State<HomeScreen> {
         await _doCrossfade(sound, remaining.inMilliseconds);
       }
     });
+
+    // Fallback: native LoopMode.one bazı MP3'lerde (özellikle uzun / yüksek
+    // metadata içeren dosyalarda) tetiklenmeyebiliyor veya crossfade
+    // setAsset beklerken outgoing natural olarak bitebiliyor. Bu durumda
+    // playerStateStream completed event'ini yakalayıp elle başa sarıyoruz.
+    _completionSub = active.playerStateStream.listen((state) async {
+      if (state.processingState != ProcessingState.completed) return;
+      if (!_isPlaying || _playingSound != sound) return;
+      if (_isCrossfading) return; // crossfade halindeyse karışma
+      // Aktif player bitti ama crossfade devralmadı — elle baştan başlat.
+      try {
+        await active.seek(Duration.zero);
+        await active.setLoopMode(LoopMode.one);
+        await active.setVolume(1.0);
+        await active.play();
+      } catch (_) { /* sessizce */ }
+    });
   }
 
   Future<void> _doCrossfade(Sound sound, int remainingMs) async {
     if (_isCrossfading || !_isPlaying || _playingSound != sound) return;
     _isCrossfading = true;
     _positionSub?.cancel();
+    _completionSub?.cancel(); // Crossfade başladı — fallback tetiklenmesin
 
     final outgoing = _activePlayerIndex == 1 ? _audioPlayer1 : _audioPlayer2;
     final incoming = _activePlayerIndex == 1 ? _audioPlayer2 : _audioPlayer1;
 
     try {
-      // İkinci player'ı hazırla ve sessiz başlat
-      await incoming.setAsset(sound.assetPath);
-      await incoming.setLoopMode(LoopMode.off);
-      await incoming.setVolume(0.0);
-      await incoming.play();
+      // Önce incoming'i hazırla — setAsset uzun sürebiliyor (büyük dosya
+      // / yavaş cihaz). Outgoing'in LoopMode'u hâlâ `.one` — bu süre içinde
+      // outgoing doğal olarak biterse kendi kendine başa sararak sessizliği
+      // önler. Hazırlık tamamlanınca LoopMode.off'a çekeceğiz.
+      if (sound.assetPath.startsWith('assets/')) {
+        await incoming.setAsset(sound.assetPath);
+      } else {
+        await incoming.setFilePath(sound.assetPath);
+      }
+      // Incoming player'a LoopMode.one ver — crossfade sonrası o aktif olacak
+      await incoming.setLoopMode(LoopMode.one);
 
-      // Volume crossfade — 20 adımda
-      const steps = 20;
+      // Incoming hazır — şimdi outgoing'in auto-loop'unu kapatmak güvenli.
+      await outgoing.setLoopMode(LoopMode.off);
+
+      // iOS fix: play() önce çağrılmalı — audio session aktif olmadan
+      // setVolume(0) iOS tarafından görmezden geliniyor.
+      await incoming.play();
+      await incoming.setVolume(0.0);
+
+      // Volume crossfade — 40 adım, equal-power (cos/sin) eğrisi.
+      //
+      // Linear crossfade (1-p, p) ortada toplam algılanan ses düzeyini düşürür
+      // → kullanıcı "boşluk" gibi algılar. Equal-power eğrisinde:
+      //   outgoing = cos(p · π/2)   incoming = sin(p · π/2)
+      // her noktada cos² + sin² = 1 olduğu için algılanan toplam güç sabittir,
+      // geçiş "tek sürekli ses" olarak duyulur.
+      const steps = 40;
       final stepMs = remainingMs ~/ steps;
 
       for (int i = 1; i <= steps; i++) {
         if (!_isPlaying || _playingSound != sound) break;
         await Future.delayed(Duration(milliseconds: stepMs));
         final progress = i / steps;
+        final outVol = cos(progress * pi / 2).clamp(0.0, 1.0);
+        final inVol = sin(progress * pi / 2).clamp(0.0, 1.0);
         try {
-          await outgoing.setVolume((1.0 - progress).clamp(0.0, 1.0));
-          await incoming.setVolume(progress.clamp(0.0, 1.0));
+          await outgoing.setVolume(outVol);
+          await incoming.setVolume(inVol);
         } catch (_) {}
       }
+      // Geçiş tamamlandı — incoming'i kesin olarak 1.0'a sabitle
+      try { await incoming.setVolume(1.0); } catch (_) {}
+      try { await outgoing.setVolume(0.0); } catch (_) {}
 
       // Player'ları değiştir
       if (_isPlaying && _playingSound == sound) {
@@ -389,7 +860,14 @@ class _HomeScreenState extends State<HomeScreen> {
         _isCrossfading = false;
       }
     } catch (_) {
+      // Crossfade bir yerde çuvalladı — outgoing'in loop'unu geri ver ki
+      // ses sonuna gelince baştan başlasın, kullanıcı sessizlik yaşamasın.
+      try { await outgoing.setLoopMode(LoopMode.one); } catch (_) {}
       _isCrossfading = false;
+      // Completion fallback yeniden devreye girsin
+      if (_isPlaying && _playingSound == sound) {
+        _startCrossfadeLoop(sound);
+      }
     }
   }
 
@@ -408,7 +886,9 @@ class _HomeScreenState extends State<HomeScreen> {
       _mixerOnClear = onClear;
       _mixerOnVolume = onVolume;
       _mixerOnSave = onSave;
-      _mixerLabel = selected.isNotEmpty ? 'Karıştırıcı (${selected.length} ses)' : null;
+      _mixerLabel = selected.isNotEmpty
+          ? _loc.t('MixerWithCount').replaceAll('{n}', '${selected.length}')
+          : null;
       if (nowEmpty) {
         _mixerPlaying = false;
       }
@@ -416,6 +896,9 @@ class _HomeScreenState extends State<HomeScreen> {
 
     // Ses seçildiğinde otomatik çal
     if (selected.isNotEmpty) {
+      // Mixer başlarken RecordScreen geri dinlemesini durdur
+      _recordKey.currentState?.stopPlayback();
+
       // Tek ses player'ı durdur
       if (_playingSound != null) {
         _playingSound!.isPlaying = false;
@@ -445,15 +928,20 @@ class _HomeScreenState extends State<HomeScreen> {
 
   // ─── Kaydedilmiş mix'e tıklandı ───
   void _onSavedMixTapped(String mixName, List<Sound> sounds) async {
+    // Mix başlarken RecordScreen geri dinlemesini durdur
+    _recordKey.currentState?.stopPlayback();
+
     // Önce tek ses player'ı durdur
     try { await _audioPlayer1.stop(); } catch (_) {}
     try { await _audioPlayer2.stop(); } catch (_) {}
 
     // Önce eski mixer player'ları tamamen durdur ve temizle
     await _stopMixerPlayers();
+    // Diğer modları (tek ses / shuffle) tam senkron temizle — setState'in
+    // ÖNCESİNDE await ediyoruz ki yeni mixer setup ile yarış olmasın.
+    await _clearAllSounds();
 
     setState(() {
-      _clearAllSounds();
       _mixerSelected = List.from(sounds);
       _mixerLabel = mixName;
       _mixerPlaying = true;
@@ -474,12 +962,59 @@ class _HomeScreenState extends State<HomeScreen> {
     // Ses sayısına göre volume ayarla
     for (final sound in sounds) {
       try {
-        final player = AudioPlayer();
-        await player.setAsset(sound.assetPath);
+        // handleInterruptions: false — tüm interruption kontrolü
+        // _initAudioSessionListener'da yapılıyor. Bkz. _audioPlayer1/2 yorumu.
+        final player = AudioPlayer(handleInterruptions: false);
+        if (sound.assetPath.startsWith('assets/')) {
+          await player.setAsset(sound.assetPath);
+        } else {
+          await player.setFilePath(sound.assetPath);
+        }
         await player.setLoopMode(LoopMode.one);
         // Doğrudan sesin bellekteki/katalogdaki volume değerini kullan
         await player.setVolume(sound.volume);
         _mixerPlayers.add(player);
+
+        // Seamless-loop fallback: native LoopMode.one bazı MP3'lerde
+        // (kabin sesi, yol sesi gibi başında/sonunda az boşluk olanlar)
+        // tetikten önce gap bırakıyor; ses bir an kapanıp yeniden başlıyor.
+        // completed event'i yakalanırsa volume'ü hızlıca 0'a indir, başa sar
+        // ve sin-curve ile ~400ms içinde fade-in yap. Tek başına çalan
+        // dosyalarda kesinti hâlâ az da olsa hissedilebilir; karışımda
+        // (mixer'da) diğer seslerin maskeleyici etkisiyle tamamen kaybolur.
+        final loopSub = player.playerStateStream.listen((state) async {
+          if (state.processingState != ProcessingState.completed) return;
+          if (!_mixerPlayers.contains(player)) return; // dispose edilmişse iptal
+          final targetVol = sound.volume;
+          try {
+            await player.setVolume(0);
+            await player.seek(Duration.zero);
+            await player.setLoopMode(LoopMode.one);
+            if (!player.playing) await player.play();
+            // Sin-curve fade-in (lineer'den daha doğal — başlangıç dik değil)
+            const steps = 20;
+            const stepDur = Duration(milliseconds: 20);
+            for (int i = 1; i <= steps; i++) {
+              await Future.delayed(stepDur);
+              if (!_mixerPlayers.contains(player)) return;
+              final p = i / steps;
+              final gain = sin(p * pi / 2);
+              try {
+                await player.setVolume((targetVol * gain).clamp(0.0, 1.0));
+              } catch (_) {
+                return;
+              }
+            }
+            // Garanti: tam hedef seviyeye otur
+            if (_mixerPlayers.contains(player)) {
+              try { await player.setVolume(targetVol); } catch (_) {}
+            }
+          } catch (e) {
+            debugPrint('Mixer loop fade-fallback hatası: $e');
+          }
+        });
+        _mixerLoopSubs.add(loopSub);
+
         // Her ses bağımsız başlatılsın
         player.play();
       } catch (e) {
@@ -492,6 +1027,13 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _stopMixerPlayers() async {
     final players = List<AudioPlayer>.from(_mixerPlayers);
     _mixerPlayers.clear();
+    // Loop fallback listener'larını da kapat — aksi halde dispose edilmiş
+    // player için completed event hâlâ geliyor olabilir.
+    final subs = List<StreamSubscription>.from(_mixerLoopSubs);
+    _mixerLoopSubs.clear();
+    for (final s in subs) {
+      try { await s.cancel(); } catch (_) {}
+    }
     for (final p in players) {
       try {
         await p.stop();
@@ -505,24 +1047,85 @@ class _HomeScreenState extends State<HomeScreen> {
   // ─── Mixer oynat/durdur ───
   void _toggleMixerPlay() async {
     if (_mixerPlaying) {
-      await _stopMixerPlayers();
-      setState(() => _mixerPlaying = false);
+      _pauseMixerPlayback();
     } else {
-      try { await _audioPlayer1.stop(); } catch (_) {}
-      try { await _audioPlayer2.stop(); } catch (_) {}
-      setState(() {
-        _clearAllSounds();
-        _mixerPlaying = true;
-      });
-      if (_mixerSelected.isNotEmpty) {
-        await _startMixerPlayers(_mixerSelected);
-      }
+      _resumeMixerPlayback();
+    }
+  }
+
+  /// Reklam sonrası mixer "hard reload" — tam yeniden başlatma.
+  ///
+  /// AdService reklam kapandığında çağırır. `_resumeMixerPlayback`'ten farkı:
+  /// • `_mixerPlaying == true` olsa bile zorla tüm player'ları siler+yeniden kurar
+  /// • Audio session'ı garanti aktive eder
+  /// • _resumeMixerPlayback'in `if (_mixerPlaying) return` guard'ı yok
+  ///
+  /// Tek ses modundaki `_hardResumePlaybackAfterAd`'ın mixer eşdeğeri.
+  Future<void> _hardResumeMixerAfterAd() async {
+    if (_mixerSelected.isEmpty) return;
+    try {
+      final session = await AudioSession.instance;
+      await session.setActive(true);
+    } catch (_) {}
+
+    // Mixer'ı tamamen sil ve yeniden kur — iOS audio route'unu sıfırlar.
+    await _stopMixerPlayers();
+    if (!mounted) return;
+    setState(() {
+      _mixerPlaying = true;
+    });
+    try {
+      await _startMixerPlayers(List<Sound>.from(_mixerSelected));
+    } catch (e) {
+      debugPrint('Hard mixer resume hatası: $e');
     }
     _syncNowPlaying();
   }
 
+  /// Reklam sonrası shuffle "hard reload" — yeni şarkıya geçerek route'u sıfırlar.
+  Future<void> _hardResumeShuffleAfterAd() async {
+    if (!_isShufflePlaying && _activeShuffleList.isEmpty) return;
+    try {
+      final session = await AudioSession.instance;
+      await session.setActive(true);
+    } catch (_) {}
+    // Mevcut player'ı tamamen durdur, yeni bir ses ile yeniden başla.
+    try { await _audioPlayer1.stop(); } catch (_) {}
+    try { await _audioPlayer2.stop(); } catch (_) {}
+    if (!mounted) return;
+    if (_activeShuffleList.isNotEmpty) {
+      await _playNextShuffleSound(_activeShuffleList);
+    }
+  }
+
+  /// Kilit ekranından: mixer devam ettir (idempotent)
+  Future<void> _resumeMixerPlayback() async {
+    if (_mixerPlaying) return; // Zaten çalıyor
+    try { await _audioPlayer1.stop(); } catch (_) {}
+    try { await _audioPlayer2.stop(); } catch (_) {}
+    // Diğer modları async temizle (await ile) — setState ÖNCESİ.
+    await _clearAllSounds();
+    if (!mounted) return;
+    setState(() {
+      _mixerPlaying = true;
+    });
+    if (_mixerSelected.isNotEmpty) {
+      await _startMixerPlayers(_mixerSelected);
+    }
+    _syncNowPlaying();
+  }
+
+  /// Kilit ekranından: mixer duraklat (idempotent)
+  Future<void> _pauseMixerPlayback() async {
+    if (!_mixerPlaying) return; // Zaten duraklatılmış
+    await _stopMixerPlayers();
+    if (!mounted) return;
+    setState(() => _mixerPlaying = false);
+    _syncNowPlaying();
+  }
+
   // ─── Mixer player kapat ───
-  void _closeMixerPlayer() async {
+  Future<void> _closeMixerPlayer() async {
     await _stopMixerPlayers();
     setState(() {
       _mixerPlaying = false;
@@ -556,6 +1159,12 @@ class _HomeScreenState extends State<HomeScreen> {
     if (index >= 0 && index < _mixerPlayers.length) {
       try {
         final player = _mixerPlayers.removeAt(index);
+        // İlgili loop fallback listener'ını da iptal et — aksi halde
+        // dispose edilmiş player için completed event tetiklenip hata
+        // fırlatabilir.
+        if (index < _mixerLoopSubs.length) {
+          try { _mixerLoopSubs.removeAt(index).cancel(); } catch (_) {}
+        }
         player.stop();
         player.dispose();
       } catch (e) {
@@ -569,41 +1178,161 @@ class _HomeScreenState extends State<HomeScreen> {
       });
     } else {
       setState(() {
-        _mixerLabel = 'Karıştırıcı (${_mixerPlayers.length} ses)';
+        _mixerLabel = _loc.t('MixerWithCount').replaceAll('{n}', '${_mixerPlayers.length}');
       });
     }
   }
 
-  // ─── Tekli ses oynat/duraklat ───
+  // ─── Tekli ses oynat/duraklat (UI butonundan) ───
   void _togglePlayPause() async {
-    final active = _activePlayerIndex == 1 ? _audioPlayer1 : _audioPlayer2;
-    setState(() {
-      _isPlaying = !_isPlaying;
-      if (_playingSound != null) _playingSound!.isPlaying = _isPlaying;
-    });
-    _syncNowPlaying();
-    try {
-      if (_isPlaying) {
-        await active.play();
-        // Custom crossfade call removed to prevent early stopping issues
-      } else {
-        _stopCrossfadeLoop();
-        await active.pause();
-      }
-    } catch (e) {
-      debugPrint('Play/pause hatası: $e');
+    if (_isPlaying) {
+      _pausePlayback();
+    } else {
+      _resumePlayback();
     }
   }
 
+  /// Kilit ekranından veya UI'dan: sadece devam ettir (idempotent)
+  Future<void> _resumePlayback() async {
+    if (_isPlaying) return; // Zaten çalıyor — çift ses önleme
+    final active = _activePlayerIndex == 1 ? _audioPlayer1 : _audioPlayer2;
+    setState(() {
+      _isPlaying = true;
+      if (_playingSound != null) _playingSound!.isPlaying = true;
+    });
+    _syncNowPlaying();
+    try {
+      // iOS'ta resume öncesi audio session'ı yeniden aktive et
+      try {
+        final session = await AudioSession.instance;
+        await session.setActive(true);
+      } catch (_) {}
+      await active.play();
+      // Resume sonrası crossfade loop'unu yeniden başlat
+      if (_playingSound != null) {
+        _startCrossfadeLoop(_playingSound!);
+      }
+    } catch (e) {
+      debugPrint('Resume hatası: $e');
+    }
+  }
+
+  /// Reklam sonrası "hard resume" — tek ses modunda audio route'u garanti
+  /// olarak yeniden kurmak için kullanılan tam yeniden yükleme yolu.
+  ///
+  /// Sebep: AdMob iOS'ta AVAudioSession'ı kendi adına aktive ediyor; reklam
+  /// kapandıktan sonra sadece `setActive(true) + play()` çağrısı, just_audio'nun
+  /// alttaki AVPlayer'ının audio çıkışını yeniden bağlamasına yetmiyor. UI
+  /// "çalıyor" gösteriyor ama hoparlörden ses çıkmıyor (Control Center'dan
+  /// çıkış aygıtını değiştirince çözülmesinin nedeni de bu — iOS o anda
+  /// audio route'u zorla yeniden kuruyor).
+  ///
+  /// Çözüm: stop → setAsset (tekrar) → play. Bu, AVPlayer'ı sıfırdan kurar
+  /// ve audio route'u garantiler. İçerik aynı ses olduğu için kullanıcı
+  /// için fark edilemeyecek hızda gerçekleşir.
+  Future<void> _hardResumePlaybackAfterAd() async {
+    final sound = _playingSound;
+    if (sound == null) return;
+    final active = _activePlayerIndex == 1 ? _audioPlayer1 : _audioPlayer2;
+
+    setState(() {
+      _isPlaying = true;
+      sound.isPlaying = true;
+    });
+    _syncNowPlaying();
+
+    try {
+      // Audio session'ı garanti olarak aktive et
+      try {
+        final session = await AudioSession.instance;
+        await session.setActive(true);
+      } catch (_) {}
+
+      // Önceki crossfade loop'unu temizle (varsa) — yeniden başlatacağız
+      _stopCrossfadeLoop();
+
+      // Hard reload: AVPlayer tamamen sıfırlansın
+      try { await active.stop(); } catch (_) {}
+      if (sound.assetPath.startsWith('assets/')) {
+        await active.setAsset(sound.assetPath);
+      } else {
+        await active.setFilePath(sound.assetPath);
+      }
+      await active.setLoopMode(LoopMode.one);
+      await active.setVolume(1.0);
+      await active.play();
+
+      if (mounted) {
+        _startCrossfadeLoop(sound);
+      }
+    } catch (e) {
+      debugPrint('Hard resume hatası: $e');
+      // Fallback: en azından klasik resume'u dene
+      try {
+        await active.play();
+      } catch (_) {}
+    }
+  }
+
+  /// Kilit ekranından veya UI'dan: sadece duraklat (idempotent)
+  Future<void> _pausePlayback() async {
+    if (!_isPlaying) return; // Zaten duraklatılmış — çift çağrı önleme
+    _stopCrossfadeLoop();
+    setState(() {
+      _isPlaying = false;
+      if (_playingSound != null) _playingSound!.isPlaying = false;
+    });
+    _syncNowPlaying();
+    try {
+      // HER İKİ player'ı da duraklat — crossfade sırasında ikisi de aktif olabilir
+      await _audioPlayer1.pause();
+      await _audioPlayer2.pause();
+    } catch (e) {
+      debugPrint('Pause hatası: $e');
+    }
+  }
+
+  /// RecordScreen tarafından çağrılır — tüm HomeScreen seslerini durdurur.
+  void _stopAllAudio() {
+    _stopCrossfadeLoop();
+    SleepTrackingService().endSession();
+    try { _audioPlayer1.pause(); } catch (_) {}
+    try { _audioPlayer2.pause(); } catch (_) {}
+    if (_mixerPlaying) {
+      for (final p in _mixerPlayers) {
+        try { p.pause(); } catch (_) {}
+      }
+    }
+    if (_isShufflePlaying) {
+      _shuffleChangeTimer?.cancel();
+      _shuffleMasterTimer?.cancel();
+      try { _audioPlayer1.pause(); } catch (_) {}
+      try { _audioPlayer2.pause(); } catch (_) {}
+    }
+    setState(() {
+      _isPlaying = false;
+      _mixerPlaying = false;
+      _isShufflePlaying = false;
+      if (_playingSound != null) _playingSound!.isPlaying = false;
+    });
+    _syncNowPlaying();
+  }
+
   // ─── Tekli ses kapat ───
-  void _closePlayer() async {
+  Future<void> _closePlayer() async {
     _stopCrossfadeLoop();
     // Uyku oturumunu sonlandır
     SleepTrackingService().endSession();
-    try { await _audioPlayer1.stop(); } catch (_) {}
-    try { await _audioPlayer2.stop(); } catch (_) {}
+    // Fade-out sonra durdur
+    final closeGen = ++_audioGen;
+    await Future.wait([
+      _fadeOutAndStop(_audioPlayer1, gen: closeGen),
+      _fadeOutAndStop(_audioPlayer2, gen: closeGen),
+    ]);
+    // Diğer modların temizliği setState öncesi await edilsin
+    await _clearAllSounds();
+    if (!mounted) return;
     setState(() {
-      _clearAllSounds();
       if (_activePlayer == ActivePlayer.single) _activePlayer = ActivePlayer.none;
     });
     _syncNowPlaying();
@@ -618,6 +1347,18 @@ class _HomeScreenState extends State<HomeScreen> {
       _startShuffle(allSounds.where((s) => s.isFavorite).toList());
     }
   }
+
+  /// Kilit ekranından: shuffle devam ettir
+  Future<void> _resumeShufflePlayback() async {
+    if (_isShufflePlaying) return;
+    _startShuffle(allSounds.where((s) => s.isFavorite).toList());
+  }
+
+  /// Kilit ekranından: shuffle duraklat
+  Future<void> _pauseShufflePlayback() async {
+    if (!_isShufflePlaying) return;
+    _stopShuffle();
+  }
   
   void _onShuffleSettingsChanged(ShuffleSettings newSettings) {
     setState(() {
@@ -630,11 +1371,12 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
   
-  void _stopShuffle() {
+  Future<void> _stopShuffle() async {
     _shuffleChangeTimer?.cancel();
     _shuffleMasterTimer?.cancel();
-    _audioPlayer1.stop();
-    _audioPlayer2.stop();
+    try { await _audioPlayer1.stop(); } catch (_) {}
+    try { await _audioPlayer2.stop(); } catch (_) {}
+    if (!mounted) return;
     setState(() {
       _isShufflePlaying = false;
       _playingSound = null;
@@ -712,13 +1454,18 @@ class _HomeScreenState extends State<HomeScreen> {
     final newPlayer = _primaryPlayer;
     
     try {
-      await newPlayer.setAsset(nextSound.assetPath);
+      if (nextSound.assetPath.startsWith('assets/')) {
+        await newPlayer.setAsset(nextSound.assetPath);
+      } else {
+        await newPlayer.setFilePath(nextSound.assetPath);
+      }
       await newPlayer.setLoopMode(LoopMode.one);
       
       if (_shuffleSettings.crossfadeEnabled) {
         // Crossfade logic
-        newPlayer.setVolume(0.0);
-        newPlayer.play();
+        // iOS fix: play() önce — audio session aktif olmadan setVolume görmezden geliniyor
+        await newPlayer.play();
+        await newPlayer.setVolume(0.0);
         
         final crossfadeMs = _shuffleSettings.crossfadeDurationSeconds * 1000;
         final steps = 20; // 20 frame'lik animasyon
@@ -802,7 +1549,11 @@ class _HomeScreenState extends State<HomeScreen> {
             onShufflePlayPause: _toggleShufflePlayPause,
             onShuffleSettingsChanged: _onShuffleSettingsChanged,
           ),
-          const RecordScreen(),
+          RecordScreen(
+            key: _recordKey,
+            onAudioStarted: _stopAllAudio,
+            isMainAudioPlaying: () => _isPlaying || _mixerPlaying || _isShufflePlaying,
+          ),
           const GamesScreen(),
           SettingsScreen(onBabyNameChanged: _onBabyNameChanged),
         ],
@@ -813,7 +1564,7 @@ class _HomeScreenState extends State<HomeScreen> {
           // Mini player — Mixer modu
           if (_activePlayer == ActivePlayer.mixer)
             MiniPlayer(
-              sound: Sound(name: _mixerLabel ?? 'Karıştırıcı (${_mixerSelected.length} ses)', icon: Icons.queue_music_rounded, assetPath: ''),
+              sound: Sound(name: _mixerLabel ?? _loc.t('MixerWithCount').replaceAll('{n}', '${_mixerSelected.length}'), icon: Icons.queue_music_rounded, assetPath: ''),
               isPlaying: _mixerPlaying,
               isCollapsed: _miniPlayerCollapsed,
               onPlayPause: _toggleMixerPlay,
@@ -858,7 +1609,11 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 }
 
-// ─── Uyku Rehberi Dialogu ───
+// ─── Uyku Rehberi Dialogu (yeni tasarım) ───
+/// Her yaş bölümü kendi rengi/emojisi ile gradyan kart olarak gösterilir.
+/// Kart açıldığında: süre + uyutma sayısı badge'leri, paragraf metin, ve
+/// 3 madde "Önemli İpuçları" listesi belirir. Üstte hero başlık, altta
+/// uyarı callout'u.
 class _SleepGuideDialog extends StatefulWidget {
   const _SleepGuideDialog();
   @override
@@ -869,85 +1624,472 @@ class _SleepGuideDialogState extends State<_SleepGuideDialog> {
   int _expandedIndex = -1;
   final _loc = LocalizationService();
 
+  // Her yaş bölümü için renk/emoji haritası — başlığa "kişilik" verir.
+  static const _sectionAccents = <_GuideAccent>[
+    _GuideAccent(emoji: '👶', primary: Color(0xFF60A5FA), secondary: Color(0xFF3B82F6)), // 0-3 ay  — bebek mavisi
+    _GuideAccent(emoji: '🌙', primary: Color(0xFFA78BFA), secondary: Color(0xFF7C3AED)), // 4-6 ay  — uyku moru
+    _GuideAccent(emoji: '🧸', primary: Color(0xFFF472B6), secondary: Color(0xFFDB2777)), // 6-12 ay — sıcak pembe
+    _GuideAccent(emoji: '🌟', primary: Color(0xFFFBBF24), secondary: Color(0xFFD97706)), // 12-24 ay — kehribar
+  ];
+
   @override
   Widget build(BuildContext context) {
     return Dialog(
-      backgroundColor: const Color(0xFF1A1035),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-      insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 40),
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(mainAxisSize: MainAxisSize.min, children: [
-          Row(children: [
-            Text(_loc.t('SleepGuide'), style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w700)),
-            const Spacer(),
-            GestureDetector(
-              onTap: () => Navigator.pop(context),
-              child: Container(
-                width: 36, height: 36,
-                decoration: BoxDecoration(shape: BoxShape.circle, color: Colors.white.withValues(alpha:0.1)),
-                child: const Icon(Icons.close, color: Colors.white, size: 20),
+      backgroundColor: Colors.transparent,
+      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 32),
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxHeight: MediaQuery.of(context).size.height * 0.88,
+          maxWidth: 560,
+        ),
+        child: Container(
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [Color(0xFF1B1240), Color(0xFF120A26)],
+            ),
+            borderRadius: BorderRadius.circular(28),
+            border: Border.all(color: Colors.white.withValues(alpha: 0.06)),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.45),
+                blurRadius: 30,
+                offset: const Offset(0, 12),
               ),
-            ),
-          ]),
-          const SizedBox(height: 20),
-          Flexible(
-            child: SingleChildScrollView(
-              child: Column(children: [
-                for (int i = 1; i <= 4; i++) ...[
-                  _SleepGuideSection(
-                    title: _loc.t('GuideTitle_$i'),
-                    content: _loc.t('GuideContent_$i'),
-                    isExpanded: _expandedIndex == i,
-                    onTap: () => setState(() => _expandedIndex = _expandedIndex == i ? -1 : i),
-                  ),
-                  if (i < 4) const SizedBox(height: 12),
-                ],
-                const SizedBox(height: 16),
-                Divider(color: Colors.white.withValues(alpha:0.08)),
-                const SizedBox(height: 12),
-                Text(
-                  _loc.t('GuideWarning'),
-                  style: TextStyle(color: Colors.white.withValues(alpha:0.4), fontSize: 11),
-                  textAlign: TextAlign.center,
-                ),
-              ]),
-            ),
+            ],
           ),
-        ]),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // ─── Hero Header ───
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 20, 14, 16),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 46,
+                      height: 46,
+                      decoration: BoxDecoration(
+                        gradient: const LinearGradient(
+                          colors: [Color(0xFF8B5CF6), Color(0xFFC084FC)],
+                        ),
+                        borderRadius: BorderRadius.circular(14),
+                        boxShadow: [
+                          BoxShadow(
+                            color: const Color(0xFF8B5CF6).withValues(alpha: 0.35),
+                            blurRadius: 12,
+                            offset: const Offset(0, 4),
+                          ),
+                        ],
+                      ),
+                      child: const Icon(Icons.nightlight_round, color: Colors.white, size: 24),
+                    ),
+                    const SizedBox(width: 14),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            _loc.t('SleepGuide'),
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 19,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: 0.2,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            _loc.t('GuideHeroSubtitle'),
+                            style: TextStyle(
+                              color: Colors.white.withValues(alpha: 0.55),
+                              fontSize: 12,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    GestureDetector(
+                      onTap: () => Navigator.pop(context),
+                      behavior: HitTestBehavior.opaque,
+                      child: Container(
+                        width: 36,
+                        height: 36,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: Colors.white.withValues(alpha: 0.08),
+                        ),
+                        child: const Icon(Icons.close_rounded, color: Colors.white, size: 18),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
+              // İnce ayraç çizgi
+              Container(
+                height: 1,
+                margin: const EdgeInsets.symmetric(horizontal: 20),
+                color: Colors.white.withValues(alpha: 0.06),
+              ),
+
+              // ─── Bölümler (scrollable) ───
+              Flexible(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 18),
+                  child: Column(
+                    children: [
+                      for (int i = 1; i <= 4; i++) ...[
+                        _SleepGuideSection(
+                          index: i,
+                          accent: _sectionAccents[i - 1],
+                          title: _loc.t('GuideTitle_$i'),
+                          content: _loc.t('GuideContent_$i'),
+                          stat: _loc.t('GuideStat_$i'),
+                          naps: _loc.t('GuideNaps_$i'),
+                          tips: [
+                            _loc.t('GuideTip_${i}_1'),
+                            _loc.t('GuideTip_${i}_2'),
+                            _loc.t('GuideTip_${i}_3'),
+                          ],
+                          dailyLabel: _loc.t('GuideSleepDuration'),
+                          napsLabel: _loc.t('GuideNapsLabel'),
+                          tipsTitle: _loc.t('GuideKeyTips'),
+                          isExpanded: _expandedIndex == i,
+                          onTap: () => setState(
+                              () => _expandedIndex = _expandedIndex == i ? -1 : i),
+                        ),
+                        if (i < 4) const SizedBox(height: 10),
+                      ],
+
+                      // ─── Uyarı Callout'u ───
+                      const SizedBox(height: 16),
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFFBBF24).withValues(alpha: 0.07),
+                          borderRadius: BorderRadius.circular(14),
+                          border: Border.all(
+                            color: const Color(0xFFFBBF24).withValues(alpha: 0.18),
+                          ),
+                        ),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Icon(
+                              Icons.info_outline_rounded,
+                              color: Color(0xFFFBBF24),
+                              size: 16,
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                _loc.t('GuideWarning'),
+                                style: TextStyle(
+                                  color: Colors.white.withValues(alpha: 0.6),
+                                  fontSize: 11,
+                                  height: 1.4,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
 }
 
+/// Tek bir yaş bölümü için kart. Kapalıyken: emoji + başlık + süre badge'i;
+/// açıldığında: paragraf + "Önemli İpuçları" listesi animasyonla belirir.
 class _SleepGuideSection extends StatelessWidget {
-  final String title, content;
+  final int index;
+  final _GuideAccent accent;
+  final String title;
+  final String content;
+  final String stat;
+  final String naps;
+  final List<String> tips;
+  final String dailyLabel;
+  final String napsLabel;
+  final String tipsTitle;
   final bool isExpanded;
   final VoidCallback onTap;
-  const _SleepGuideSection({required this.title, required this.content, required this.isExpanded, required this.onTap});
+
+  const _SleepGuideSection({
+    required this.index,
+    required this.accent,
+    required this.title,
+    required this.content,
+    required this.stat,
+    required this.naps,
+    required this.tips,
+    required this.dailyLabel,
+    required this.napsLabel,
+    required this.tipsTitle,
+    required this.isExpanded,
+    required this.onTap,
+  });
 
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
       onTap: onTap,
+      behavior: HitTestBehavior.opaque,
       child: AnimatedContainer(
-        duration: const Duration(milliseconds: 300),
-        padding: const EdgeInsets.all(16),
+        duration: const Duration(milliseconds: 280),
+        curve: Curves.easeOutCubic,
         decoration: BoxDecoration(
-          color: isExpanded ? AppColors.purple.withValues(alpha:0.15) : Colors.white.withValues(alpha:0.05),
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: isExpanded ? AppColors.purple.withValues(alpha:0.3) : Colors.white.withValues(alpha:0.08)),
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: isExpanded
+                ? [
+                    accent.primary.withValues(alpha: 0.18),
+                    accent.secondary.withValues(alpha: 0.06),
+                  ]
+                : [
+                    Colors.white.withValues(alpha: 0.04),
+                    Colors.white.withValues(alpha: 0.02),
+                  ],
+          ),
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(
+            color: isExpanded
+                ? accent.primary.withValues(alpha: 0.45)
+                : Colors.white.withValues(alpha: 0.07),
+            width: isExpanded ? 1.3 : 1,
+          ),
         ),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Row(children: [
-            Expanded(child: Text(title, style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w600))),
-            Icon(isExpanded ? Icons.keyboard_arrow_up_rounded : Icons.keyboard_arrow_down_rounded, color: Colors.white54, size: 24),
-          ]),
-          if (isExpanded) ...[
-            const SizedBox(height: 14),
-            Text(content, style: TextStyle(color: Colors.white.withValues(alpha:0.7), fontSize: 13, height: 1.5)),
+        padding: const EdgeInsets.fromLTRB(14, 12, 12, 14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // ─── Başlık satırı ───
+            Row(
+              children: [
+                // Emoji rozeti
+                Container(
+                  width: 38,
+                  height: 38,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [
+                        accent.primary.withValues(alpha: 0.32),
+                        accent.secondary.withValues(alpha: 0.18),
+                      ],
+                    ),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                      color: accent.primary.withValues(alpha: 0.35),
+                    ),
+                  ),
+                  child: Text(
+                    accent.emoji,
+                    style: const TextStyle(fontSize: 20),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    title,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 14.5,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 0.15,
+                    ),
+                  ),
+                ),
+                AnimatedRotation(
+                  turns: isExpanded ? 0.5 : 0.0,
+                  duration: const Duration(milliseconds: 260),
+                  curve: Curves.easeOutCubic,
+                  child: Icon(
+                    Icons.keyboard_arrow_down_rounded,
+                    color: isExpanded
+                        ? accent.primary.withValues(alpha: 0.9)
+                        : Colors.white.withValues(alpha: 0.55),
+                    size: 22,
+                  ),
+                ),
+              ],
+            ),
+
+            // ─── Süre + Uyutma badge'leri (kapalıyken de görünür) ───
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                _GuideStatChip(
+                  icon: Icons.access_time_rounded,
+                  label: dailyLabel,
+                  value: stat,
+                  color: accent.primary,
+                ),
+                const SizedBox(width: 8),
+                _GuideStatChip(
+                  icon: Icons.bedtime_rounded,
+                  label: napsLabel,
+                  value: naps,
+                  color: accent.secondary,
+                ),
+              ],
+            ),
+
+            // ─── Açılan içerik (paragraf + ipuçları) ───
+            AnimatedSize(
+              duration: const Duration(milliseconds: 260),
+              curve: Curves.easeOutCubic,
+              alignment: Alignment.topCenter,
+              child: !isExpanded
+                  ? const SizedBox.shrink()
+                  : Padding(
+                      padding: const EdgeInsets.only(top: 14),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          // Paragraf metin
+                          Text(
+                            content,
+                            style: TextStyle(
+                              color: Colors.white.withValues(alpha: 0.75),
+                              fontSize: 13,
+                              height: 1.55,
+                            ),
+                          ),
+                          const SizedBox(height: 14),
+                          // İpuçları başlığı
+                          Row(
+                            children: [
+                              Icon(
+                                Icons.tips_and_updates_rounded,
+                                size: 14,
+                                color: accent.primary,
+                              ),
+                              const SizedBox(width: 6),
+                              Text(
+                                tipsTitle,
+                                style: TextStyle(
+                                  color: accent.primary,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w800,
+                                  letterSpacing: 0.6,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          // 3 madde ipucu
+                          ...List.generate(tips.length, (i) {
+                            return Padding(
+                              padding: EdgeInsets.only(
+                                bottom: i == tips.length - 1 ? 0 : 8,
+                              ),
+                              child: Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Container(
+                                    margin: const EdgeInsets.only(top: 6, right: 9),
+                                    width: 6,
+                                    height: 6,
+                                    decoration: BoxDecoration(
+                                      shape: BoxShape.circle,
+                                      gradient: LinearGradient(
+                                        colors: [accent.primary, accent.secondary],
+                                      ),
+                                    ),
+                                  ),
+                                  Expanded(
+                                    child: Text(
+                                      tips[i],
+                                      style: TextStyle(
+                                        color: Colors.white.withValues(alpha: 0.78),
+                                        fontSize: 12.5,
+                                        height: 1.5,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            );
+                          }),
+                        ],
+                      ),
+                    ),
+            ),
           ],
-        ]),
+        ),
+      ),
+    );
+  }
+}
+
+/// Yaş bölümlerine atanan renk/emoji paleti.
+class _GuideAccent {
+  final String emoji;
+  final Color primary;
+  final Color secondary;
+  const _GuideAccent({
+    required this.emoji,
+    required this.primary,
+    required this.secondary,
+  });
+}
+
+/// Süre / uyutma sayısı için küçük bilgi çipi.
+class _GuideStatChip extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final String value;
+  final Color color;
+  const _GuideStatChip({
+    required this.icon,
+    required this.label,
+    required this.value,
+    required this.color,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.13),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: color.withValues(alpha: 0.28)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, color: color, size: 13),
+          const SizedBox(width: 6),
+          Text(
+            '$label: ',
+            style: TextStyle(
+              color: Colors.white.withValues(alpha: 0.55),
+              fontSize: 10.5,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+          Text(
+            value,
+            style: TextStyle(
+              color: color,
+              fontSize: 11.5,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+        ],
       ),
     );
   }

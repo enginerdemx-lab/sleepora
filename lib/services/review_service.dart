@@ -1,5 +1,7 @@
+import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'localization_service.dart';
 
 class ReviewService {
   static const String _firstLaunchKey = 'first_launch_date';
@@ -60,67 +62,206 @@ class ReviewService {
     showDialog(
       context: context,
       barrierDismissible: false,
+      barrierColor: Colors.black.withValues(alpha: 0.65),
       builder: (ctx) => Dialog(
-        backgroundColor: const Color(0xFF1A1025),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-        child: Padding(
-          padding: const EdgeInsets.all(28),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Text('\u{2B50}', style: TextStyle(fontSize: 48)),
-              const SizedBox(height: 16),
-              const Text(
-                'Sleepora\'yı Beğendiniz mi?',
-                style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w700),
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: 8),
-              Text(
-                'Uygulamayı puanlayarak diğer ailelere yardımcı olabilirsiniz.',
-                style: TextStyle(color: Colors.white.withValues(alpha:0.5), fontSize: 14, height: 1.4),
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: 24),
-              // Puanla butonu
-              GestureDetector(
-                onTap: () {
-                  markAsRated();
-                  Navigator.pop(ctx);
-                  // TODO: App Store'a yönlendir
-                },
-                child: Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.symmetric(vertical: 14),
-                  decoration: BoxDecoration(
-                    gradient: const LinearGradient(colors: [Color(0xFF7C3AED), Color(0xFF5B21B6)]),
-                    borderRadius: BorderRadius.circular(14),
-                  ),
-                  child: const Center(
-                    child: Text('Uygulamayı Puanla', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w600)),
-                  ),
+        backgroundColor: Colors.transparent,
+        insetPadding: const EdgeInsets.symmetric(horizontal: 32),
+        elevation: 0,
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(28),
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 30, sigmaY: 30),
+            child: Container(
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(28),
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [
+                    Colors.white.withValues(alpha: 0.12),
+                    Colors.white.withValues(alpha: 0.04),
+                  ],
                 ),
-              ),
-              const SizedBox(height: 10),
-              // Şimdi değil butonu
-              GestureDetector(
-                onTap: () {
-                  dismissReview();
-                  Navigator.pop(ctx);
-                },
-                child: Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.symmetric(vertical: 14),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha:0.06),
-                    borderRadius: BorderRadius.circular(14),
-                  ),
-                  child: Center(
-                    child: Text('Şimdi Değil', style: TextStyle(color: Colors.white.withValues(alpha:0.5), fontSize: 14, fontWeight: FontWeight.w500)),
-                  ),
+                border: Border.all(
+                  color: Colors.white.withValues(alpha: 0.18),
+                  width: 1.2,
                 ),
+                boxShadow: [
+                  BoxShadow(
+                    color: const Color(0xFF7C3AED).withValues(alpha: 0.25),
+                    blurRadius: 40,
+                    spreadRadius: 2,
+                  ),
+                ],
               ),
-            ],
+              child: Stack(
+                children: [
+                  // Üst glow efekti
+                  Positioned(
+                    top: -40,
+                    left: -20,
+                    right: -20,
+                    height: 120,
+                    child: Container(
+                      decoration: BoxDecoration(
+                        gradient: RadialGradient(
+                          colors: [
+                            const Color(0xFF7C3AED).withValues(alpha: 0.35),
+                            Colors.transparent,
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(28, 32, 28, 24),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        // App icon — camsı çerçeve içinde
+                        Container(
+                          width: 84,
+                          height: 84,
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(22),
+                            border: Border.all(
+                              color: Colors.white.withValues(alpha: 0.25),
+                              width: 1.5,
+                            ),
+                            boxShadow: [
+                              BoxShadow(
+                                color: const Color(0xFF7C3AED).withValues(alpha: 0.5),
+                                blurRadius: 24,
+                                spreadRadius: 1,
+                              ),
+                            ],
+                          ),
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(20),
+                            child: Image.asset(
+                              'assets/images/logo.jpg',
+                              width: 84,
+                              height: 84,
+                              fit: BoxFit.cover,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 18),
+                        // 5 yıldız
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: List.generate(5, (i) {
+                            return Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: 2),
+                              child: Icon(
+                                Icons.star_rounded,
+                                size: 22,
+                                color: const Color(0xFFFFD700).withValues(alpha: 0.95),
+                                shadows: [
+                                  Shadow(
+                                    color: const Color(0xFFFFD700).withValues(alpha: 0.6),
+                                    blurRadius: 10,
+                                  ),
+                                ],
+                              ),
+                            );
+                          }),
+                        ),
+                        const SizedBox(height: 16),
+                        Text(
+                          LocalizationService().t('ReviewTitle'),
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 20,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: 0.2,
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
+                        const SizedBox(height: 10),
+                        Text(
+                          LocalizationService().t('ReviewDesc'),
+                          style: TextStyle(
+                            color: Colors.white.withValues(alpha: 0.6),
+                            fontSize: 13.5,
+                            height: 1.5,
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
+                        const SizedBox(height: 26),
+                        // Puanla butonu — gradient + glow
+                        GestureDetector(
+                          onTap: () {
+                            markAsRated();
+                            Navigator.pop(ctx);
+                          },
+                          child: Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.symmetric(vertical: 15),
+                            decoration: BoxDecoration(
+                              gradient: const LinearGradient(
+                                begin: Alignment.topLeft,
+                                end: Alignment.bottomRight,
+                                colors: [Color(0xFF8B5CF6), Color(0xFF6D28D9)],
+                              ),
+                              borderRadius: BorderRadius.circular(16),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: const Color(0xFF7C3AED).withValues(alpha: 0.55),
+                                  blurRadius: 20,
+                                  offset: const Offset(0, 8),
+                                ),
+                              ],
+                            ),
+                            child: Center(
+                              child: Text(
+                                LocalizationService().t('ReviewRate'),
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 15.5,
+                                  fontWeight: FontWeight.w700,
+                                  letterSpacing: 0.2,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        // Şimdi değil — camsı ikinci buton
+                        GestureDetector(
+                          onTap: () {
+                            dismissReview();
+                            Navigator.pop(ctx);
+                          },
+                          child: Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            decoration: BoxDecoration(
+                              color: Colors.white.withValues(alpha: 0.06),
+                              borderRadius: BorderRadius.circular(16),
+                              border: Border.all(
+                                color: Colors.white.withValues(alpha: 0.08),
+                                width: 1,
+                              ),
+                            ),
+                            child: Center(
+                              child: Text(
+                                LocalizationService().t('ReviewLater'),
+                                style: TextStyle(
+                                  color: Colors.white.withValues(alpha: 0.55),
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
           ),
         ),
       ),

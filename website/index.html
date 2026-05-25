@@ -1,0 +1,745 @@
+<!DOCTYPE html>
+<html lang="tr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, viewport-fit=cover" />
+    <title>Sleepora | Bebeğinizin uykusu için sakin bir gece</title>
+    <meta name="description" content="Sleepora ile uyku sesleri, karıştırıcı, favoriler, zamanlayıcı, uyku istatistikleri ve mini oyunları tek uygulamada keşfedin." />
+    <meta name="theme-color" content="#08051a" />
+    <meta property="og:title" content="Sleepora | Bebek Uyku Sesleri" />
+    <meta property="og:description" content="Karıştırıcı, favoriler, zamanlayıcı ve uyku istatistikleriyle daha sakin geceler için tasarlanan Sleepora’yı keşfedin." />
+    <meta property="og:type" content="website" />
+    <meta property="og:image" content="./assets/screens/home.png" />
+    <link rel="icon" href="./assets/logo.jpg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body data-theme="night" data-anim="high">
+    <!-- Background layers -->
+    <div class="bg-stack">
+      <div class="bg-gradient"></div>
+      <canvas id="starfield"></canvas>
+      <div class="bg-moon"></div>
+      <div class="bg-blob b1"></div>
+      <div class="bg-blob b2"></div>
+      <div class="bg-blob b3"></div>
+    </div>
+    <div class="noise"></div>
+
+    <!-- Custom cursor -->
+    <div class="cursor-ring"></div>
+    <div class="cursor-dot"></div>
+
+    <!-- SVG defs -->
+    <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+      <defs>
+        <linearGradient id="timerGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stop-color="#5de8da" />
+          <stop offset="100%" stop-color="#9d68ff" />
+        </linearGradient>
+      </defs>
+    </svg>
+
+    <div class="site-shell">
+      <header class="topbar container">
+        <a class="brand" href="#top" aria-label="Sleepora">
+          <img src="./assets/logo.jpg" alt="" class="brand-logo" />
+          <span>Sleepora</span>
+        </a>
+        <nav class="nav" aria-label="Birincil">
+          <a href="#features"><span>Özellikler</span></a>
+          <a href="#showcase"><span>Deneyim</span></a>
+          <a href="#mixer"><span>Karıştırıcı</span></a>
+          <a href="#games"><span>Oyunlar</span></a>
+          <a href="#faq"><span>SSS</span></a>
+        </nav>
+        <a class="nav-cta" href="#download">İndir <span aria-hidden="true">→</span></a>
+        <button class="nav-toggle" id="navToggle" aria-label="Menüyü aç" aria-expanded="false">
+          <span></span><span></span><span></span>
+        </button>
+      </header>
+      <nav class="mobile-nav" id="mobileNav" aria-label="Mobil menü">
+        <a href="#features">Özellikler</a>
+        <a href="#showcase">Deneyim</a>
+        <a href="#mixer">Karıştırıcı</a>
+        <a href="#games">Oyunlar</a>
+        <a href="#faq">SSS</a>
+        <a href="#download" class="mobile-nav-cta">İndir →</a>
+      </nav>
+
+      <main id="top">
+        <!-- HERO -->
+        <section class="hero container">
+          <div class="hero-copy">
+            <span class="eyebrow"><span class="eyebrow-dot"></span> Daha sakin geceler için</span>
+            <h1>Bebeğinizin uykusu için <span class="gradient">huzurlu</span> bir gece.</h1>
+            <p class="hero-text">
+              Sleepora; rahatlatıcı uyku sesleri, ses karıştırıcı, favoriler, zamanlayıcı, uyku istatistikleri, kayıt ve mini oyunları modern bir deneyimde bir araya getirir.
+            </p>
+            <div class="cta-row">
+              <span class="store-button primary disabled" aria-disabled="true" role="button" tabindex="-1">
+                <span class="store-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="currentColor"><path d="M16.4 1.6c0 1.2-.5 2.4-1.3 3.2-.9.9-2.2 1.6-3.4 1.5-.1-1.2.5-2.4 1.3-3.2.9-.9 2.3-1.5 3.4-1.5zM20.5 17.6c-.6 1.4-.9 2-1.7 3.2-1.1 1.7-2.7 3.8-4.7 3.8-1.7 0-2.2-1.1-4.6-1.1-2.4 0-2.9 1.1-4.6 1.1-2 0-3.5-1.9-4.6-3.6C-.7 16.7-1 11.5 1 8.6c1.5-2.1 3.7-3.3 5.9-3.3 2.2 0 3.6 1.2 5.4 1.2 1.8 0 2.9-1.2 5.4-1.2 1.9 0 4 1 5.4 2.9-4.7 2.6-4 9.4-2.6 9.4z"/></svg>
+                </span>
+                <span>
+                  <strong>App Store</strong>
+                  <small>Çok yakında</small>
+                </span>
+                <span class="soon-badge">Yakında</span>
+              </span>
+              <a class="store-button secondary" href="https://play.google.com/store/apps/details?id=com.bebekuyku.app" target="_blank" rel="noreferrer">
+                <span class="store-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24"><path fill="#5de8da" d="M3.6 1.7c-.4.4-.6 1-.6 1.7v17.2c0 .8.2 1.4.6 1.7l9.7-10.3L3.6 1.7z"/><path fill="#ff8cc8" d="m17.4 8.5-3.7-2.1L4 1.4l9.4 10.3 4-3.2z"/><path fill="#9d68ff" d="m17.4 15.5 4-2.3c.7-.4 1-1 1-1.5s-.3-1-1-1.5L17.4 8.5l-4 3.2 4 3.8z"/><path fill="#ffd58c" d="m4 22.6 9.7-5 3.7-2.1-4-3.8L4 22.6z"/></svg>
+                </span>
+                <span>
+                  <strong>Google Play</strong>
+                  <small>Android bağlantısı hazır</small>
+                </span>
+              </a>
+            </div>
+            <div class="hero-meta">
+              <span class="stars">★★★★★</span>
+              <span>10.000+ aile</span>
+              <span class="divider"></span>
+              <span>26 ses · 4 oyun · 5 dil</span>
+            </div>
+          </div>
+
+          <div class="hero-visual">
+            <div class="wave-stage" aria-hidden="true">
+              <div class="wave-ring"></div>
+              <div class="wave-ring"></div>
+              <div class="wave-ring"></div>
+              <div class="wave-ring"></div>
+            </div>
+
+            <div class="phone">
+              <div class="phone-screen">
+                <div class="phone-slide active" data-slide="0"><img src="./assets/screens/home.png" alt="Sleepora ana ekran" /></div>
+                <div class="phone-slide" data-slide="1"><img src="./assets/screens/mixer-grid.png" alt="Karıştırıcı" /></div>
+                <div class="phone-slide" data-slide="2"><img src="./assets/screens/sleep-stats.png" alt="Uyku istatistikleri" /></div>
+                <div class="phone-slide" data-slide="3"><img src="./assets/screens/favorites.png" alt="Favoriler" /></div>
+              </div>
+            </div>
+
+            <div class="callout c-mixer" aria-hidden="true">
+              <div class="icon-bubble">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M4 6h12M4 12h6M4 18h16"/><circle cx="20" cy="6" r="2.5" fill="currentColor"/><circle cx="14" cy="12" r="2.5" fill="currentColor"/><circle cx="8" cy="18" r="2.5" fill="currentColor"/></svg>
+              </div>
+              <div>
+                <span class="label">Karıştırıcı</span>
+                <strong>Sesleri katmanla</strong>
+              </div>
+            </div>
+            <div class="callout c-stats" aria-hidden="true">
+              <div class="icon-bubble">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M4 18V8M10 18V4M16 18v-7M22 18H2"/></svg>
+              </div>
+              <div>
+                <span class="label">İstatistikler</span>
+                <strong>Gece ritmi</strong>
+              </div>
+            </div>
+            <div class="callout c-timer" aria-hidden="true">
+              <div class="icon-bubble">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2 2M9 2h6"/></svg>
+              </div>
+              <div>
+                <span class="label">Zamanlayıcı</span>
+                <strong>Yumuşak kapanış</strong>
+              </div>
+            </div>
+
+            <div class="phone-dots" role="tablist" aria-label="Ekran geçişleri">
+              <button class="dot active" data-slide-target="0" aria-label="Ana ekran"></button>
+              <button class="dot" data-slide-target="1" aria-label="Karıştırıcı"></button>
+              <button class="dot" data-slide-target="2" aria-label="İstatistikler"></button>
+              <button class="dot" data-slide-target="3" aria-label="Favoriler"></button>
+            </div>
+
+            <div class="audio-bars" aria-hidden="true">
+              <span></span><span></span><span></span><span></span><span></span><span></span><span></span>
+              <span></span><span></span><span></span><span></span><span></span><span></span><span></span>
+            </div>
+          </div>
+        </section>
+
+        <!-- Marquee strip -->
+        <div class="marquee reveal r-fade" aria-hidden="true">
+          <div class="marquee-track" id="marqueeTrack">
+            <div class="marquee-group">
+              <span class="marquee-item">Pış Pış <span class="blob"></span></span>
+              <span class="marquee-item">Eee Eee <span class="blob"></span></span>
+              <span class="marquee-item">Dandini <span class="blob"></span></span>
+              <span class="marquee-item">Süpürge <span class="blob"></span></span>
+              <span class="marquee-item">Kolik <span class="blob"></span></span>
+              <span class="marquee-item">Kabin Sesi <span class="blob"></span></span>
+              <span class="marquee-item">Uyusunda Büyüsün <span class="blob"></span></span>
+              <span class="marquee-item">Yıldız Tozu <span class="blob"></span></span>
+              <span class="marquee-item">Pış Pış + Süpürge <span class="blob"></span></span>
+              <span class="marquee-item">Beyaz Gürültü <span class="blob"></span></span>
+              <span class="marquee-item">Konuşma <span class="blob"></span></span>
+              <span class="marquee-item">Yol Sesi <span class="blob"></span></span>
+              <span class="marquee-item">Yağmur <span class="blob"></span></span>
+              <span class="marquee-item">Saç Kurutma <span class="blob"></span></span>
+              <span class="marquee-item">Pış Pış 2 <span class="blob"></span></span>
+              <span class="marquee-item">Rüzgar <span class="blob"></span></span>
+              <span class="marquee-item">Dalga <span class="blob"></span></span>
+              <span class="marquee-item">Duş <span class="blob"></span></span>
+              <span class="marquee-item">Helikopter <span class="blob"></span></span>
+              <span class="marquee-item">Tren <span class="blob"></span></span>
+              <span class="marquee-item">Vantilatör <span class="blob"></span></span>
+              <span class="marquee-item">Kalp Atışı <span class="blob"></span></span>
+              <span class="marquee-item">Kuş Sesi <span class="blob"></span></span>
+              <span class="marquee-item">Su Sesi <span class="blob"></span></span>
+              <span class="marquee-item">Çamaşır Makinesi <span class="blob"></span></span>
+              <span class="marquee-item">Trafik <span class="blob"></span></span>
+            </div>
+            <div class="marquee-group" aria-hidden="true">
+              <span class="marquee-item">Pış Pış <span class="blob"></span></span>
+              <span class="marquee-item">Eee Eee <span class="blob"></span></span>
+              <span class="marquee-item">Dandini <span class="blob"></span></span>
+              <span class="marquee-item">Süpürge <span class="blob"></span></span>
+              <span class="marquee-item">Kolik <span class="blob"></span></span>
+              <span class="marquee-item">Kabin Sesi <span class="blob"></span></span>
+              <span class="marquee-item">Uyusunda Büyüsün <span class="blob"></span></span>
+              <span class="marquee-item">Yıldız Tozu <span class="blob"></span></span>
+              <span class="marquee-item">Pış Pış + Süpürge <span class="blob"></span></span>
+              <span class="marquee-item">Beyaz Gürültü <span class="blob"></span></span>
+              <span class="marquee-item">Konuşma <span class="blob"></span></span>
+              <span class="marquee-item">Yol Sesi <span class="blob"></span></span>
+              <span class="marquee-item">Yağmur <span class="blob"></span></span>
+              <span class="marquee-item">Saç Kurutma <span class="blob"></span></span>
+              <span class="marquee-item">Pış Pış 2 <span class="blob"></span></span>
+              <span class="marquee-item">Rüzgar <span class="blob"></span></span>
+              <span class="marquee-item">Dalga <span class="blob"></span></span>
+              <span class="marquee-item">Duş <span class="blob"></span></span>
+              <span class="marquee-item">Helikopter <span class="blob"></span></span>
+              <span class="marquee-item">Tren <span class="blob"></span></span>
+              <span class="marquee-item">Vantilatör <span class="blob"></span></span>
+              <span class="marquee-item">Kalp Atışı <span class="blob"></span></span>
+              <span class="marquee-item">Kuş Sesi <span class="blob"></span></span>
+              <span class="marquee-item">Su Sesi <span class="blob"></span></span>
+              <span class="marquee-item">Çamaşır Makinesi <span class="blob"></span></span>
+              <span class="marquee-item">Trafik <span class="blob"></span></span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Metrics -->
+        <section class="container">
+          <div class="metrics">
+            <article class="metric-card reveal" data-delay="1">
+              <div class="icon-mini">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
+              </div>
+              <strong data-count="26">0</strong>
+              <span>uyku sesi</span>
+            </article>
+            <article class="metric-card reveal" data-delay="2">
+              <div class="icon-mini">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 4l12 8-12 8z"/></svg>
+              </div>
+              <strong data-count="4">0</strong>
+              <span>mini oyun</span>
+            </article>
+            <article class="metric-card reveal" data-delay="3">
+              <div class="icon-mini">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg>
+              </div>
+              <strong data-count="5">0</strong>
+              <span>dil desteği</span>
+            </article>
+            <article class="metric-card reveal" data-delay="4">
+              <div class="icon-mini">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 11h18"/></svg>
+              </div>
+              <strong data-count="7">0</strong>
+              <span>günlük takip</span>
+            </article>
+          </div>
+        </section>
+
+        <!-- FEATURES BENTO -->
+        <section id="features" class="container block">
+          <div class="section-heading reveal">
+            <span class="section-tag">Öne çıkanlar</span>
+            <h2>Gece akışında <span style="color:var(--accent-2)">gerçekten</span> kullanılan parçalar.</h2>
+            <p>Karıştırıcı, favoriler, zamanlayıcı, uyku istatistikleri ve kayıt — her biri kullanım kolaylığı için yeniden düşünüldü.</p>
+          </div>
+
+          <div class="bento">
+            <article class="bento-card b-large reveal" data-delay="1">
+              <span class="badge">Karıştırıcı</span>
+              <h3>Birden fazla sesi katmanla, her biri için farklı seviye seç.</h3>
+              <p>Yağmur + ninni + kalp atışı… Tek dokunuşla bebeğine en uygun karışımı kur ve favorilere kaydet.</p>
+              <div class="mixer-viz" aria-hidden="true">
+                <div class="mixer-tile on"><svg viewBox="0 0 24 24"><path d="M7 14a4 4 0 1 1 1-7.9A6 6 0 0 1 19 9a3 3 0 1 1 0 6H7z"/><path d="M9 18l-1 3M13 18l-1 3M17 18l-1 3"/></svg></div>
+                <div class="mixer-tile"><svg viewBox="0 0 24 24"><path d="M2 12c2 0 3-2 5-2s3 2 5 2 3-2 5-2 3 2 5 2M2 17c2 0 3-2 5-2s3 2 5 2 3-2 5-2 3 2 5 2M2 7c2 0 3-2 5-2s3 2 5 2 3-2 5-2 3 2 5 2"/></svg></div>
+                <div class="mixer-tile on"><svg viewBox="0 0 24 24"><path d="M3 12c4-2 7-2 11 0s7 2 7-2"/><path d="M3 18c4-2 7-2 11 0s7 2 7-2"/></svg></div>
+                <div class="mixer-tile"><svg viewBox="0 0 24 24"><path d="M12 22c4 0 7-3 7-7 0-3-2-5-3-7-2 2-2 4-3 4s-1-3-3-5c-2 3-5 5-5 9 0 4 3 6 7 6z"/></svg></div>
+                <div class="mixer-tile on"><svg viewBox="0 0 24 24"><path d="M12 21s-7-4.5-9-9c-1.5-3.5 1-7 4.5-7 2 0 3.5 1 4.5 2.5C13 6 14.5 5 16.5 5 20 5 22.5 8.5 21 12c-2 4.5-9 9-9 9z"/></svg></div>
+                <div class="mixer-tile"><svg viewBox="0 0 24 24"><path d="M16 7l-1 5-3 1c-1.5 0-3-1-3-3 0-1 1-2 2-3 0 0 1-1 2-1 1 0 1 0 1 0z"/><path d="M9 13l-4 7M15 12l3 8M11 14l-1 7"/></svg></div>
+                <div class="mixer-tile"><svg viewBox="0 0 24 24"><path d="M21 13a9 9 0 1 1-10-10 7 7 0 0 0 10 10z"/></svg></div>
+                <div class="mixer-tile on"><svg viewBox="0 0 24 24"><path d="M9 18V6l11-2v12"/><circle cx="6" cy="18" r="3"/><circle cx="17" cy="16" r="3"/></svg></div>
+              </div>
+            </article>
+
+            <article class="bento-card b-tall reveal" data-delay="2">
+              <span class="badge">Zamanlayıcı</span>
+              <h3>Yumuşak kapanış.</h3>
+              <p>15, 30, 45 dakika ya da daha uzun. Ses kademeli olarak azalır.</p>
+              <div class="timer-widget" id="timerWidget">
+                <div class="tw-display">
+                  <span class="tw-num" id="twNum">45</span><span class="tw-unit">dk</span>
+                </div>
+                <div class="tw-sub">Seslerin ne kadar çalacağını seç</div>
+                <div class="tw-ticks">
+                  <span>0</span><span>15</span><span>30</span><span>45</span><span>60</span><span>75</span><span>90</span>
+                </div>
+                <div class="tw-slider" id="twSlider">
+                  <div class="tw-track">
+                    <div class="tw-fill" id="twFill"></div>
+                  </div>
+                  <div class="tw-thumb" id="twThumb"></div>
+                </div>
+                <div class="tw-presets" id="twPresets">
+                  <button data-min="15">15'</button>
+                  <button data-min="30">30'</button>
+                  <button data-min="45" class="on">45'</button>
+                  <button data-min="60">1 sa</button>
+                  <button data-min="90">1.5s</button>
+                  <button data-min="120">2s</button>
+                </div>
+              </div>
+            </article>
+
+            <article class="bento-card b-wide reveal" data-delay="1">
+              <span class="badge">Favoriler</span>
+              <h3>Sevdiğin karışımı tek dokunuşla başlat.</h3>
+              <div class="fav-pills" aria-hidden="true">
+                <span class="heart">♥ Yağmur + Ninni</span>
+                <span class="heart">♥ Okyanus</span>
+                <span>Beyaz gürültü</span>
+                <span>Şömine</span>
+                <span>Anne kalbi</span>
+              </div>
+            </article>
+
+            <article class="bento-card b-stats reveal" data-delay="2">
+              <div class="stats-head">
+                <span class="badge">İstatistikler</span>
+                <h3>Haftalık uyku özeti.</h3>
+              </div>
+              <div class="stats-bars" aria-hidden="true">
+                <div class="bar-col"><div class="bar-track"><div class="bar" data-value="6.5s" style="height:55%; animation-delay:.1s"></div></div><small>Pzt</small></div>
+                <div class="bar-col"><div class="bar-track"><div class="bar" data-value="7.2s" style="height:72%; animation-delay:.2s"></div></div><small>Sal</small></div>
+                <div class="bar-col"><div class="bar-track"><div class="bar" data-value="5.8s" style="height:48%; animation-delay:.3s"></div></div><small>Çar</small></div>
+                <div class="bar-col"><div class="bar-track"><div class="bar" data-value="8.6s" style="height:88%; animation-delay:.4s"></div></div><small>Per</small></div>
+                <div class="bar-col today"><div class="bar-track"><div class="bar" data-value="8.9s" style="height:96%; animation-delay:.5s"></div></div><small>Cum</small></div>
+                <div class="bar-col"><div class="bar-track"><div class="bar" data-value="7.0s" style="height:68%; animation-delay:.6s"></div></div><small>Cmt</small></div>
+                <div class="bar-col"><div class="bar-track"><div class="bar" data-value="0" style="height:14%; animation-delay:.7s; opacity:.45"></div></div><small>Paz</small></div>
+              </div>
+
+              <div class="stats-today">
+                <div class="st-row">
+                  <div>
+                    <span class="st-day">Cum · 01.05</span>
+                    <span class="st-sub">2 oturum</span>
+                  </div>
+                  <span class="st-pill">8 sa 57 dk</span>
+                </div>
+                <div class="st-sessions">
+                  <span>21:51 · 1 sa 10 dk</span>
+                  <span>23:29 · 7 sa 47 dk</span>
+                </div>
+              </div>
+
+              <div class="stats-kpis">
+                <div class="kpi">
+                  <span class="kpi-icon ki-1">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+                  </span>
+                  <strong>14</strong>
+                  <small>oturum</small>
+                </div>
+                <div class="kpi">
+                  <span class="kpi-icon ki-2">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+                  </span>
+                  <strong>12 sa 5…</strong>
+                  <small>Toplam Süre</small>
+                </div>
+                <div class="kpi">
+                  <span class="kpi-icon ki-3">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><polyline points="3 17 9 11 13 15 21 7"/><polyline points="14 7 21 7 21 14"/></svg>
+                  </span>
+                  <strong>55 dk</strong>
+                  <small>Ortalama</small>
+                </div>
+                <div class="kpi">
+                  <span class="kpi-icon ki-4">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+                  </span>
+                  <strong>~21:00</strong>
+                  <small>Genelde Saat</small>
+                </div>
+              </div>
+
+              <div class="stats-fav">
+                <span class="sf-icon">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M9 18V6l11-2v12"/><circle cx="6" cy="18" r="2.5"/><circle cx="17" cy="16" r="2.5"/></svg>
+                </span>
+                <div class="sf-text">
+                  <small>Favori Ses</small>
+                  <strong>Eee Eee</strong>
+                </div>
+                <span class="sf-time">10 sa 34 dk</span>
+              </div>
+
+              <div class="stats-hourly">
+                <div class="sh-head">
+                  <span class="sh-dot"></span>
+                  <strong>Saatlik Dağılım</strong>
+                </div>
+                <div class="sh-bars" aria-hidden="true">
+                  <div class="sh" style="--h:8%"></div>
+                  <div class="sh" style="--h:6%"></div>
+                  <div class="sh" style="--h:4%"></div>
+                  <div class="sh" style="--h:32%"></div>
+                  <div class="sh" style="--h:14%"></div>
+                  <div class="sh" style="--h:6%"></div>
+                  <div class="sh" style="--h:4%"></div>
+                  <div class="sh" style="--h:8%"></div>
+                  <div class="sh" style="--h:18%"></div>
+                  <div class="sh" style="--h:42%"></div>
+                  <div class="sh" style="--h:36%"></div>
+                  <div class="sh" style="--h:48%"></div>
+                  <div class="sh" style="--h:14%"></div>
+                  <div class="sh" style="--h:8%"></div>
+                  <div class="sh" style="--h:5%"></div>
+                  <div class="sh" style="--h:6%"></div>
+                  <div class="sh" style="--h:30%"></div>
+                  <div class="sh" style="--h:38%"></div>
+                  <div class="sh" style="--h:24%"></div>
+                  <div class="sh" style="--h:18%"></div>
+                  <div class="sh" style="--h:12%"></div>
+                  <div class="sh" style="--h:6%"></div>
+                  <div class="sh" style="--h:8%"></div>
+                  <div class="sh" style="--h:4%"></div>
+                </div>
+                <div class="sh-axis"><span>00</span><span>06</span><span>12</span><span>18</span><span>23</span></div>
+              </div>
+            </article>
+
+            <article class="bento-card b-wide reveal" data-delay="3">
+              <span class="badge">Kayıt</span>
+              <h3>Kendi sesini ya da ninnini ekle.</h3>
+              <p>Anne ya da babanın sesi her zaman en güçlü ninnidir. Sleepora kayıt özelliğiyle bunu rutine taşıyabilirsin.</p>
+              <div class="record-pulse" aria-hidden="true">
+                <div class="stack">
+                  <div class="ripple"></div>
+                  <div class="ripple r2"></div>
+                  <div class="dot-rec"></div>
+                </div>
+              </div>
+            </article>
+
+            <article class="bento-card b-small reveal" data-delay="4">
+              <span class="badge">Karıştırma modu</span>
+              <h3>Akıllı geçişler.</h3>
+              <p>Sleepora, gece boyunca çalan sesleri yumuşak geçişlerle birleştirir; uyandırıcı ani kesintiler olmaz.</p>
+            </article>
+          </div>
+        </section>
+
+        <!-- SHOWCASE: scroll-pinned phone -->
+        <section id="showcase" class="container block">
+          <div class="section-heading reveal">
+            <span class="section-tag">Deneyim</span>
+            <h2>Tek uygulama, dört adımda <span style="color:var(--teal)">huzurlu</span> bir gece.</h2>
+          </div>
+
+          <div class="showcase">
+            <div class="showcase-steps">
+              <button class="step-card active reveal" data-delay="1">
+                <span class="step-num">01 — Ses Seç</span>
+                <h3>Bebeğine en uygun sesi keşfet.</h3>
+                <p>26 ses kütüphanesinden — yağmur, beyaz gürültü, ninni, kalp atışı, okyanus dalgası — bebeğin için en uygun olanı seç.</p>
+              </button>
+              <button class="step-card reveal" data-delay="2">
+                <span class="step-num">02 — Karıştır</span>
+                <h3>Birden fazla sesi katmanla.</h3>
+                <p>Karıştırıcıdan istediğin sesleri aynı anda aç, her biri için ayrı seviye belirle ve kendi karışımını kur.</p>
+              </button>
+              <button class="step-card reveal" data-delay="3">
+                <span class="step-num">03 — Süre Belirle</span>
+                <h3>Zamanlayıcı ile yumuşak kapanış.</h3>
+                <p>15, 30, 45 dakika veya daha uzun süre seçeneklerinden biriyle gecenin akışını kontrollü tut.</p>
+              </button>
+              <button class="step-card reveal" data-delay="4">
+                <span class="step-num">04 — Takip Et</span>
+                <h3>Uyku istatistiklerini incele.</h3>
+                <p>Toplam süre, ortalama uyku, en sevilen ses ve haftalık görünümle bebeğinin uyku düzenini daha yakından izle.</p>
+              </button>
+            </div>
+
+            <div class="showcase-phone reveal" data-delay="1">
+              <div class="phone">
+                <div class="phone-screen">
+                  <div class="phone-slide active"><img src="./assets/screens/home.png" alt="Ana ekran" /></div>
+                  <div class="phone-slide"><img src="./assets/screens/mixer-edit.png" alt="Karıştırıcı düzenleme" /></div>
+                  <div class="phone-slide"><img src="./assets/screens/timer.png" alt="Zamanlayıcı" /></div>
+                  <div class="phone-slide"><img src="./assets/screens/sleep-stats.png" alt="Uyku istatistikleri" /></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- INTERACTIVE MIXER DEMO -->
+        <section id="mixer" class="container block">
+          <div class="section-heading reveal">
+            <span class="section-tag">Interaktif demo</span>
+            <h2>Aşağıdaki sesleri karıştır, kendi <span class="gradient" style="background:linear-gradient(120deg,var(--teal),var(--accent));-webkit-background-clip:text;background-clip:text;color:transparent">karışımını</span> dene.</h2>
+            <p>Sleepora’nın karıştırıcısı tam olarak böyle çalışır — birden fazla sesi açıp kendi gece atmosferini yarat.</p>
+          </div>
+
+          <div class="mixer-demo reveal">
+            <div class="mixer-grid" id="mixerGrid">
+              <button class="sound-pad" data-id="pispis"><span class="icon"><svg viewBox="0 0 24 24"><path d="M21 13a9 9 0 1 1-10-10 7 7 0 0 0 10 10z"/></svg></span><span class="label">Pış Pış</span><span class="pulse-ring"></span></button>
+              <button class="sound-pad" data-id="eeeee"><span class="icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="9" cy="11" r="1"/><circle cx="15" cy="11" r="1"/><path d="M9 15c1 1 2 1.5 3 1.5s2-.5 3-1.5"/></svg></span><span class="label">Eee Eee</span><span class="pulse-ring"></span></button>
+              <button class="sound-pad" data-id="dandini"><span class="icon"><svg viewBox="0 0 24 24"><path d="M9 18V6l11-2v12"/><circle cx="6" cy="18" r="3"/><circle cx="17" cy="16" r="3"/></svg></span><span class="label">Dandini</span><span class="pulse-ring"></span></button>
+              <button class="sound-pad" data-id="supurge"><span class="icon"><svg viewBox="0 0 24 24"><path d="M13 2L8 14h4l-2 8 9-12h-4l3-8z"/></svg></span><span class="label">Süpürge</span><span class="pulse-ring"></span></button>
+              <button class="sound-pad" data-id="kolik"><span class="icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="9" cy="11" r="1"/><circle cx="15" cy="11" r="1"/><path d="M10 16h4"/></svg></span><span class="label">Kolik</span><span class="pulse-ring"></span></button>
+              <button class="sound-pad" data-id="kabin"><span class="icon"><svg viewBox="0 0 24 24"><path d="M21 16v-2l-8-5V3.5a1.5 1.5 0 0 0-3 0V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1L15 22v-1.5L13 19v-5.5z"/></svg></span><span class="label">Kabin Sesi</span><span class="pulse-ring"></span></button>
+              <button class="sound-pad" data-id="yagmur"><span class="icon"><svg viewBox="0 0 24 24"><path d="M7 14a4 4 0 1 1 1-7.9A6 6 0 0 1 19 9a3 3 0 1 1 0 6H7z"/><path d="M9 18l-1 3M13 18l-1 3M17 18l-1 3"/></svg></span><span class="label">Yağmur</span><span class="pulse-ring"></span></button>
+              <button class="sound-pad" data-id="okyanus"><span class="icon"><svg viewBox="0 0 24 24"><path d="M2 12c4-3 6-3 10 0s6 3 10 0M2 18c4-3 6-3 10 0s6 3 10 0M2 6c4-3 6-3 10 0s6 3 10 0"/></svg></span><span class="label">Okyanus</span><span class="pulse-ring"></span></button>
+              <button class="sound-pad" data-id="kalp"><span class="icon"><svg viewBox="0 0 24 24"><path d="M12 21s-7-4.5-9-9c-1.5-3.5 1-7 4.5-7 2 0 3.5 1 4.5 2.5C13 6 14.5 5 16.5 5 20 5 22.5 8.5 21 12c-2 4.5-9 9-9 9z"/></svg></span><span class="label">Kalp Atışı</span><span class="pulse-ring"></span></button>
+              <button class="sound-pad" data-id="beyaz"><span class="icon"><svg viewBox="0 0 24 24"><path d="M5 16a4 4 0 1 1 1-7.9A6 6 0 0 1 18 9a4 4 0 1 1 0 7H5z"/></svg></span><span class="label">Beyaz Gürültü</span><span class="pulse-ring"></span></button>
+              <button class="sound-pad" data-id="somine"><span class="icon"><svg viewBox="0 0 24 24"><path d="M12 22c4 0 7-3 7-7 0-3-2-5-3-7-2 2-2 4-3 4s-1-3-3-5c-2 3-5 5-5 9 0 4 3 6 7 6z"/></svg></span><span class="label">Şömine</span><span class="pulse-ring"></span></button>
+              <button class="sound-pad" data-id="saat"><span class="icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></span><span class="label">Saat Tik Tak</span><span class="pulse-ring"></span></button>
+            </div>
+            <div class="mixer-summary">
+              <div class="count">
+                <strong>3</strong>
+                <span>aktif ses</span>
+              </div>
+              <div class="live-bars" aria-hidden="true">
+                <span style="animation-delay:0s"></span>
+                <span style="animation-delay:.1s"></span>
+                <span style="animation-delay:.2s"></span>
+                <span style="animation-delay:.3s"></span>
+                <span style="animation-delay:.2s"></span>
+                <span style="animation-delay:.1s"></span>
+                <span style="animation-delay:0s"></span>
+                <span style="animation-delay:.1s"></span>
+                <span style="animation-delay:.2s"></span>
+                <span style="animation-delay:.3s"></span>
+                <span style="animation-delay:.2s"></span>
+                <span style="animation-delay:.1s"></span>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- GAMES -->
+        <section id="games" class="container block">
+          <div class="section-heading reveal">
+            <span class="section-tag">Oyunlar</span>
+            <h2>Ses deneyimine eşlik eden <span style="color:var(--teal)">sade</span> bir oyun alanı.</h2>
+            <p>Bebek uyurken size de küçük bir mola: dört mini oyun, sade ve rahatlatıcı bir tasarımla.</p>
+          </div>
+          <div class="games-list">
+            <article class="game-row reveal" data-delay="1" style="--accent-c:#5de8da; --accent-c2:#2a8780;">
+              <div class="gr-thumb"><img src="./assets/screens/minesweeper.png" alt="Mayın Tarlası" loading="lazy" /></div>
+              <div class="gr-meta">
+                <h4>Mayın Tarlası</h4>
+                <p>Klasik mayın bulma oyunu</p>
+                <div class="gr-tags">
+                  <span class="chip" style="background:rgba(93,232,218,0.16); border-color:rgba(93,232,218,0.32); color:var(--teal)">
+                    <span class="chip-dot" style="background:var(--teal)"></span>
+                    Strateji
+                  </span>
+                  <span class="rating"><span class="star">★</span> 4.8</span>
+                </div>
+              </div>
+              <button class="gr-play" aria-label="Mayın Tarlası'nı oyna">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+              </button>
+            </article>
+
+            <article class="game-row reveal" data-delay="2" style="--accent-c:#ff5e8c; --accent-c2:#a83560;">
+              <div class="gr-thumb"><img src="./assets/screens/puzzle-2048.png" alt="2048 Puzzle" loading="lazy" /></div>
+              <div class="gr-meta">
+                <h4>2048 Puzzle</h4>
+                <p>Sayıları birleştir, 2048'e ulaş</p>
+                <div class="gr-tags">
+                  <span class="chip" style="background:rgba(255,140,200,0.16); border-color:rgba(255,140,200,0.32); color:var(--pink)">
+                    <span class="chip-dot" style="background:var(--pink)"></span>
+                    Bulmaca
+                  </span>
+                  <span class="rating"><span class="star">★</span> 4.9</span>
+                </div>
+              </div>
+              <button class="gr-play" aria-label="2048 Puzzle'ı oyna">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+              </button>
+            </article>
+
+            <article class="game-row reveal" data-delay="3" style="--accent-c:#5e9bff; --accent-c2:#3560a8;">
+              <div class="gr-thumb"><img src="./assets/screens/block-dreams.png" alt="Block Dreams" loading="lazy" /></div>
+              <div class="gr-meta">
+                <h4>Block Dreams</h4>
+                <p>Blokları yerleştir, satırları temizle</p>
+                <div class="gr-tags">
+                  <span class="chip" style="background:rgba(94,155,255,0.16); border-color:rgba(94,155,255,0.32); color:#9bc2ff">
+                    <span class="chip-dot" style="background:#5e9bff"></span>
+                    Bulmaca
+                  </span>
+                  <span class="rating"><span class="star">★</span> 4.7</span>
+                </div>
+              </div>
+              <button class="gr-play" aria-label="Block Dreams'i oyna">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+              </button>
+            </article>
+
+            <article class="game-row reveal" data-delay="4" style="--accent-c:#9d68ff; --accent-c2:#5d35a8;">
+              <div class="gr-thumb"><img src="./assets/screens/quiz-categories.png" alt="Bilgi Yarışması" loading="lazy" /></div>
+              <div class="gr-meta">
+                <h4>Bilgi Yarışması</h4>
+                <p>Bilgini test et</p>
+                <div class="gr-tags">
+                  <span class="chip" style="background:rgba(157,104,255,0.16); border-color:rgba(157,104,255,0.32); color:var(--accent-2)">
+                    <span class="chip-dot" style="background:var(--accent)"></span>
+                    Bilgi
+                  </span>
+                  <span class="rating"><span class="star">★</span> 5.0</span>
+                </div>
+              </div>
+              <button class="gr-play" aria-label="Bilgi Yarışması'nı oyna">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+              </button>
+            </article>
+          </div>
+        </section>
+
+        <!-- TESTIMONIALS -->
+        <section class="container block">
+          <div class="section-heading reveal">
+            <span class="section-tag">Aileler ne diyor</span>
+            <h2>Daha sakin geceler, daha <span style="color:var(--accent-2)">huzurlu</span> sabahlar.</h2>
+          </div>
+          <div class="tt-track">
+            <article class="tt-card reveal" data-delay="1">
+              <div class="stars">★★★★★</div>
+              <blockquote>"Yağmur + ninni karışımıyla bebeğim 10 dakikada uyuyor. Zamanlayıcı sayesinde gece de rahat ediyoruz."</blockquote>
+              <div class="who">
+                <div class="avatar" style="background:linear-gradient(135deg,#5de8da,#9d68ff)">EA</div>
+                <div><strong>Elif Aydın</strong><small>2 yaşında bir bebek annesi</small></div>
+              </div>
+            </article>
+            <article class="tt-card reveal" data-delay="2">
+              <div class="stars">★★★★★</div>
+              <blockquote>"Kayıt özelliği çok özel. Eşimin sesini koyuyorum, kızımı sakinleştirmek için harika bir yöntem oldu."</blockquote>
+              <div class="who">
+                <div class="avatar" style="background:linear-gradient(135deg,#ff8cc8,#9d68ff)">MK</div>
+                <div><strong>Murat Kaya</strong><small>Yeni baba</small></div>
+              </div>
+            </article>
+            <article class="tt-card reveal" data-delay="3">
+              <div class="stars">★★★★★</div>
+              <blockquote>"İstatistikler bölümü çok faydalı. Hangi seste ne kadar uyuduğunu görmek rutinimizi düzenlememe yardımcı oluyor."</blockquote>
+              <div class="who">
+                <div class="avatar" style="background:linear-gradient(135deg,#ffd58c,#ff8cc8)">ZD</div>
+                <div><strong>Zeynep Demir</strong><small>3 aylık bebek annesi</small></div>
+              </div>
+            </article>
+          </div>
+        </section>
+
+        <!-- FAQ -->
+        <section id="faq" class="container block">
+          <div class="section-heading reveal">
+            <span class="section-tag">Sık sorulan</span>
+            <h2>Aklındaki birkaç soruyu <span style="color:var(--teal)">cevaplayalım</span>.</h2>
+          </div>
+          <div class="faq">
+            <div class="faq-item reveal">
+              <button class="faq-q">Sleepora ücretli mi?<span class="plus" aria-hidden="true"></span></button>
+              <div class="faq-a"><div class="faq-a-inner">Sleepora’yı App Store ve Google Play üzerinden indirebilirsin. Temel özellikler kullanıma açık, premium içerikler için uygulama içi seçenekler sunuluyor.</div></div>
+            </div>
+            <div class="faq-item reveal" data-delay="1">
+              <button class="faq-q">Telefon kilitli olduğunda ses çalmaya devam eder mi?<span class="plus" aria-hidden="true"></span></button>
+              <div class="faq-a"><div class="faq-a-inner">Evet. Sleepora arka planda çalışır; telefonunu kilitlesen de zamanlayıcı bitene kadar ses kesilmez.</div></div>
+            </div>
+            <div class="faq-item reveal" data-delay="2">
+              <button class="faq-q">Karıştırıcıda kaç sesi aynı anda açabilirim?<span class="plus" aria-hidden="true"></span></button>
+              <div class="faq-a"><div class="faq-a-inner">Tüm sesleri aynı anda katmanlayabilirsin. Her biri için ayrı seviye ayarlayarak kendi rahatlatıcı karışımını oluşturabilirsin.</div></div>
+            </div>
+            <div class="faq-item reveal" data-delay="3">
+              <button class="faq-q">Kayıt özelliği nasıl çalışıyor?<span class="plus" aria-hidden="true"></span></button>
+              <div class="faq-a"><div class="faq-a-inner">Uygulama içinde kendi sesini, ninnini veya bebeğin sevdiği bir melodiyi kaydedebilir, bu kaydı diğer seslerle karıştırabilirsin.</div></div>
+            </div>
+            <div class="faq-item reveal" data-delay="4">
+              <button class="faq-q">Hangi dilleri destekliyor?<span class="plus" aria-hidden="true"></span></button>
+              <div class="faq-a"><div class="faq-a-inner">Sleepora 5 dilde kullanılabilir: Türkçe, İngilizce, Almanca, İspanyolca ve Fransızca.</div></div>
+            </div>
+          </div>
+        </section>
+
+        <!-- PRIVACY -->
+        <section id="privacy" class="container block">
+          <article class="privacy-card reveal">
+            <div>
+              <span class="section-tag">Gizlilik</span>
+              <h2>Verilerin güvende, gizliliğin önemli.</h2>
+              <p>App Store süreci ve kullanıcı güveni için gerekli gizlilik politikası, tanıtım deneyiminden kopmadan aynı domain altında erişilebilir.</p>
+            </div>
+            <a class="text-button" href="./privacy-policy.html">Politikayı aç <span class="arrow">→</span></a>
+          </article>
+        </section>
+
+        <!-- DOWNLOAD CTA -->
+        <section id="download" class="container block">
+          <article class="download-card reveal">
+            <img src="./assets/logo.jpg" alt="" class="download-logo" />
+            <div>
+              <span class="section-tag">İndir</span>
+              <h2>Bu gece daha sakin bir uyku ile başla.</h2>
+              <p>Sleepora’yı App Store ya da Google Play üzerinden indir, kendi karışımını kur ve daha huzurlu bir gece rutinine geç.</p>
+            </div>
+            <div class="download-actions">
+              <span class="store-button primary disabled" aria-disabled="true" role="button" tabindex="-1">
+                <span class="store-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M16.4 1.6c0 1.2-.5 2.4-1.3 3.2-.9.9-2.2 1.6-3.4 1.5-.1-1.2.5-2.4 1.3-3.2.9-.9 2.3-1.5 3.4-1.5zM20.5 17.6c-.6 1.4-.9 2-1.7 3.2-1.1 1.7-2.7 3.8-4.7 3.8-1.7 0-2.2-1.1-4.6-1.1-2.4 0-2.9 1.1-4.6 1.1-2 0-3.5-1.9-4.6-3.6C-.7 16.7-1 11.5 1 8.6c1.5-2.1 3.7-3.3 5.9-3.3 2.2 0 3.6 1.2 5.4 1.2 1.8 0 2.9-1.2 5.4-1.2 1.9 0 4 1 5.4 2.9-4.7 2.6-4 9.4-2.6 9.4z"/></svg></span>
+                <span><strong>App Store</strong><small>Çok yakında</small></span>
+                <span class="soon-badge">Yakında</span>
+              </span>
+              <a class="store-button secondary" href="https://play.google.com/store/apps/details?id=com.bebekuyku.app" target="_blank" rel="noreferrer">
+                <span class="store-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path fill="#5de8da" d="M3.6 1.7c-.4.4-.6 1-.6 1.7v17.2c0 .8.2 1.4.6 1.7l9.7-10.3L3.6 1.7z"/><path fill="#ff8cc8" d="m17.4 8.5-3.7-2.1L4 1.4l9.4 10.3 4-3.2z"/><path fill="#9d68ff" d="m17.4 15.5 4-2.3c.7-.4 1-1 1-1.5s-.3-1-1-1.5L17.4 8.5l-4 3.2 4 3.8z"/><path fill="#ffd58c" d="m4 22.6 9.7-5 3.7-2.1-4-3.8L4 22.6z"/></svg></span>
+                <span><strong>Google Play</strong><small>Bağlantıyı aç</small></span>
+              </a>
+            </div>
+          </article>
+        </section>
+      </main>
+
+      <footer class="footer container">
+        <div class="left">
+          <strong>Sleepora</strong>
+          <p>Uyku sesleri, karıştırıcı, favoriler, zamanlayıcı, istatistikler ve mini oyunlar — tek uygulamada.</p>
+        </div>
+        <div class="footer-links">
+          <a href="./privacy-policy.html">Gizlilik Politikası</a>
+          <a href="mailto:destek@sleepora.com">İletişim</a>
+          <a href="#top">Başa dön</a>
+        </div>
+      </footer>
+    </div>
+
+    <script src="./script.js"></script>
+  </body>
+</html>

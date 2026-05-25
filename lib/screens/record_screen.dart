@@ -10,6 +10,7 @@ import '../theme/app_theme.dart';
 import '../services/subscription_service.dart';
 import 'paywall_screen.dart';
 import '../services/localization_service.dart';
+import 'sounds_screen.dart';
 
 // ─── Native recorder via MethodChannel ───
 class NativeRecorder {
@@ -67,12 +68,14 @@ class Recording {
   final String path;
   final DateTime date;
   final Duration duration;
+  bool isShowInHome; // Anasayfada gösterilsin mi?
 
   Recording({
     required this.name,
     required this.path,
     required this.date,
     required this.duration,
+    this.isShowInHome = true,
   });
 
   String get formattedDate =>
@@ -85,7 +88,7 @@ class Recording {
   }
 
   String toStorageString() =>
-      '$name|$path|${date.millisecondsSinceEpoch}|${duration.inSeconds}';
+      '$name|$path|${date.millisecondsSinceEpoch}|${duration.inSeconds}|${isShowInHome ? '1' : '0'}';
 
   static Recording? fromStorageString(String s) {
     final parts = s.split('|');
@@ -95,19 +98,30 @@ class Recording {
       path: parts[1],
       date: DateTime.fromMillisecondsSinceEpoch(int.parse(parts[2])),
       duration: Duration(seconds: int.parse(parts[3])),
+      isShowInHome: parts.length >= 5 ? parts[4] == '1' : true,
     );
   }
 }
 
 // ─── Record Screen ───
 class RecordScreen extends StatefulWidget {
-  const RecordScreen({super.key});
+  /// Kayıt veya geri dinleme başladığında HomeScreen sesleri durdurabilsin.
+  final VoidCallback? onAudioStarted;
+
+  /// HomeScreen'de ses çalınıp çalınmadığını kontrol etmek için.
+  final bool Function()? isMainAudioPlaying;
+
+  const RecordScreen({
+    super.key,
+    this.onAudioStarted,
+    this.isMainAudioPlaying,
+  });
 
   @override
-  State<RecordScreen> createState() => _RecordScreenState();
+  State<RecordScreen> createState() => RecordScreenState();
 }
 
-class _RecordScreenState extends State<RecordScreen>
+class RecordScreenState extends State<RecordScreen>
     with TickerProviderStateMixin {
   final _loc = LocalizationService();
   final AudioPlayer _playbackPlayer = AudioPlayer();
@@ -137,6 +151,8 @@ class _RecordScreenState extends State<RecordScreen>
   @override
   void initState() {
     super.initState();
+    // IndexedStack içinde sabit instance — dil değişimi için kendimiz listen ediyoruz.
+    _loc.addListener(_onLanguageChanged);
     _pulseController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 1200),
@@ -157,13 +173,31 @@ class _RecordScreenState extends State<RecordScreen>
     });
   }
 
+  void _onLanguageChanged() {
+    if (mounted) setState(() {});
+  }
+
   @override
   void dispose() {
+    _loc.removeListener(_onLanguageChanged);
     _recordTimer?.cancel();
     _waveformTimer?.cancel();
     _pulseController.dispose();
     _playbackPlayer.dispose();
     super.dispose();
+  }
+
+  /// HomeScreen tarafından çağrılır — aktif geri dinlemeyi durdurur.
+  void stopPlayback() {
+    if (_isPlaying) {
+      _playbackPlayer.pause();
+      if (mounted) {
+        setState(() {
+          _isPlaying = false;
+          _playingIndex = null;
+        });
+      }
+    }
   }
 
   // ─── Persistence ───
@@ -177,7 +211,12 @@ class _RecordScreenState extends State<RecordScreen>
         loaded.add(r);
       }
     }
-    if (mounted) setState(() => _recordings = loaded);
+    if (mounted) {
+      setState(() {
+        _recordings = loaded;
+      });
+      _syncToAllSounds(); // İlk açılışta allSounds'u güncelle
+    }
   }
 
   Future<void> _saveRecordings() async {
@@ -186,6 +225,26 @@ class _RecordScreenState extends State<RecordScreen>
       'recordings',
       _recordings.map((r) => r.toStorageString()).toList(),
     );
+    _syncToAllSounds(); // Her güncellemede allSounds'u senkronize et
+  }
+
+  void _syncToAllSounds() {
+    // Mevcut kayıtları allSounds'tan temizle
+    allSounds.removeWhere((s) => s.isRecord);
+    
+    // isShowInHome olanları ekle
+    final toAdd = _recordings
+        .where((r) => r.isShowInHome)
+        .map((r) => Sound(
+              name: r.name,
+              icon: Icons.mic_rounded,
+              assetPath: r.path, // mutlak dosya yolu
+              isRecord: true,
+            ))
+        .toList();
+        
+    // En başa ekle
+    allSounds.insertAll(0, toAdd);
   }
 
   // ─── Recording ───
@@ -195,6 +254,40 @@ class _RecordScreenState extends State<RecordScreen>
       await PaywallScreen.showIfNeeded(context, feature: _loc.t('FeatUnlimitedRecord'));
       return;
     }
+
+    // Eğer HomeScreen'de ses çalıyorsa kullanıcıyı uyar
+    final mainAudioPlaying = widget.isMainAudioPlaying?.call() ?? false;
+    if (mainAudioPlaying && mounted) {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          backgroundColor: AppColors.card,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          title: Text(
+            _loc.t('RecordSoundPlayingTitle'),
+            style: const TextStyle(color: AppColors.white, fontSize: 17, fontWeight: FontWeight.w600),
+          ),
+          content: Text(
+            _loc.t('RecordSoundPlayingMsg'),
+            style: const TextStyle(color: AppColors.greyLight, fontSize: 14, height: 1.5),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: Text(_loc.t('RecordCancelBtn'), style: const TextStyle(color: AppColors.grey)),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: Text(_loc.t('RecordStartBtn'), style: const TextStyle(color: AppColors.purple, fontWeight: FontWeight.w600)),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true) return;
+      // Onaylandı — HomeScreen sesini durdur
+      widget.onAudioStarted?.call();
+    }
+
     try {
       final hasPermission = await NativeRecorder.hasPermission();
       if (!hasPermission) {
@@ -322,8 +415,11 @@ class _RecordScreenState extends State<RecordScreen>
       setState(() => _isPlaying = false);
       return;
     }
+    // Geri dinleme başlamadan önce HomeScreen sesini durdur
+    widget.onAudioStarted?.call();
     try {
       await _playbackPlayer.setFilePath(_recordings[index].path);
+      await _playbackPlayer.setLoopMode(LoopMode.one);
       await _playbackPlayer.play();
       setState(() {
         _playingIndex = index;
@@ -676,6 +772,12 @@ class _RecordScreenState extends State<RecordScreen>
                                   onPlay: () => _playRecording(index),
                                   onRename: () => _renameRecording(index),
                                   onDelete: () => _deleteRecording(index),
+                                  onToggleShowInHome: () {
+                                    setState(() {
+                                      _recordings[index].isShowInHome = !_recordings[index].isShowInHome;
+                                    });
+                                    _saveRecordings();
+                                  },
                                 );
                               },
                             ),
@@ -698,6 +800,7 @@ class _RecordingItem extends StatelessWidget {
   final VoidCallback onPlay;
   final VoidCallback onRename;
   final VoidCallback onDelete;
+  final VoidCallback onToggleShowInHome;
 
   const _RecordingItem({
     required this.recording,
@@ -705,6 +808,7 @@ class _RecordingItem extends StatelessWidget {
     required this.onPlay,
     required this.onRename,
     required this.onDelete,
+    required this.onToggleShowInHome,
   });
 
   @override
@@ -753,6 +857,17 @@ class _RecordingItem extends StatelessWidget {
                   style: const TextStyle(color: AppColors.grey, fontSize: 12),
                 ),
               ],
+            ),
+          ),
+          GestureDetector(
+            onTap: onToggleShowInHome,
+            child: Padding(
+              padding: const EdgeInsets.all(8),
+              child: Icon(
+                recording.isShowInHome ? Icons.home_rounded : Icons.home_outlined, 
+                color: recording.isShowInHome ? AppColors.purple : AppColors.greyLight, 
+                size: 20
+              ),
             ),
           ),
           GestureDetector(

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
 import '../services/localization_service.dart';
 import '../screens/paywall_screen.dart';
+import 'unlock_button.dart';
 
 /// Animasyonlu kilit açma ikonlu Plus upgrade dialog.
 /// Tüm Plus/premium prompt'ları bu widget'ı kullanır — tutarlı tasarım.
@@ -172,42 +173,15 @@ class _PlusDialogState extends State<PlusDialog> with TickerProviderStateMixin {
                     const SizedBox(height: 24),
 
                     // ── Plus'a Geç butonu ──
-                    GestureDetector(
-                      onTap: () {
-                        Navigator.pop(context);
-                        PaywallScreen.showIfNeeded(context, feature: widget.featureTitle);
-                      },
-                      child: Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.symmetric(vertical: 15),
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(14),
-                          gradient: const LinearGradient(
-                            begin: Alignment.topLeft,
-                            end: Alignment.bottomRight,
-                            colors: [Color(0xFF8B5CF6), Color(0xFF6D28D9)],
-                          ),
-                          border: Border.all(color: Colors.white.withValues(alpha: 0.2), width: 0.5),
-                          boxShadow: [
-                            BoxShadow(
-                              color: AppColors.purple.withValues(alpha: 0.4),
-                              blurRadius: 16,
-                              spreadRadius: -4,
-                              offset: const Offset(0, 4),
-                            ),
-                          ],
-                        ),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            const Icon(Icons.diamond_rounded, color: Colors.white, size: 17),
-                            const SizedBox(width: 8),
-                            Text(
-                              loc.t('BtnGoPremium'),
-                              style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w700),
-                            ),
-                          ],
-                        ),
+                    SizedBox(
+                      width: double.infinity,
+                      child: UnlockButton(
+                        label: loc.t('BtnGoPremium'),
+                        height: 54,
+                        onTap: () {
+                          Navigator.pop(context);
+                          PaywallScreen.showIfNeeded(context, feature: widget.featureTitle);
+                        },
                       ),
                     ),
                     const SizedBox(height: 10),

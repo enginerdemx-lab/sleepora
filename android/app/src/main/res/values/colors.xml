@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Splash screen radial gradient'inin dış rengi (0xFF0D0520) —
+         native launch screen'i Flutter splash'a sorunsuz geçirmek için.
+         iOS LaunchScreen.storyboard backgroundColor ile birebir aynı. -->
+    <color name="splash_background">#FF0D0520</color>
+</resources>

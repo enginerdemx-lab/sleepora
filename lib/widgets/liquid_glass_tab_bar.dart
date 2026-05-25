@@ -111,6 +111,10 @@ class _LiquidGlassTabBarState extends State<LiquidGlassTabBar>
     final idx = _indexFromX(d.localPosition.dx, w);
     if (idx != _scrubIndex) {
       setState(() => _scrubIndex = idx);
+      if (idx != widget.currentIndex) {
+        // Sekmeler arası anında geçiş yap (gerçek zamanlı scrub)
+        widget.onTap(idx);
+      }
       HapticFeedback.lightImpact();
     }
   }

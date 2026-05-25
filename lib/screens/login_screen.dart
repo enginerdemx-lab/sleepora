@@ -4,6 +4,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../theme/app_theme.dart';
 import '../services/localization_service.dart';
 import '../services/auth_service.dart';
+import 'home_screen.dart';
 
 /// Login ekranı — Paywall ile aynı koyu tema ve yıldızlı arka plan.
 class LoginScreen extends StatefulWidget {
@@ -83,13 +84,26 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
     super.dispose();
   }
 
+  /// Giriş başarılıysa pop ya da (root ise) HomeScreen'e yönlendir.
+  void _afterSignInSuccess() {
+    if (!mounted) return;
+    if (Navigator.of(context).canPop()) {
+      Navigator.pop(context, true);
+    } else {
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(builder: (_) => const HomeScreen()),
+        (route) => false,
+      );
+    }
+  }
+
   Future<void> _signInWithApple() async {
     setState(() { _isLoading = true; _loadingProvider = 'apple'; });
     try {
       final success = await AuthService().signInWithApple();
       if (mounted) {
         if (success) {
-          Navigator.pop(context, true);
+          _afterSignInSuccess();
         } else {
           setState(() { _isLoading = false; _loadingProvider = null; });
           final error = AuthService().error;
@@ -110,7 +124,7 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
       final success = await AuthService().signInWithGoogle();
       if (mounted) {
         if (success) {
-          Navigator.pop(context, true);
+          _afterSignInSuccess();
         } else {
           setState(() { _isLoading = false; _loadingProvider = null; });
           final error = AuthService().error;
@@ -125,7 +139,19 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
     }
   }
 
-  void _continueAsGuest() => Navigator.pop(context, false);
+  void _continueAsGuest() {
+    // Eğer pop yapacak bir route varsa pop ile dön (normal akış).
+    // Yoksa (örn. hesap silindikten sonra LoginScreen root olarak açılırsa),
+    // siyah ekrana düşmesin diye HomeScreen'i root yap.
+    if (Navigator.of(context).canPop()) {
+      Navigator.pop(context, false);
+    } else {
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(builder: (_) => const HomeScreen()),
+        (route) => false,
+      );
+    }
+  }
 
   void _showError(String message) {
     ScaffoldMessenger.of(context).showSnackBar(
@@ -231,8 +257,12 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
                             const Spacer(),
                             GestureDetector(
                               onTap: () async {
-                                final url = Uri.parse('https://enginerdemx-lab.github.io/bebek-uykusu-app/privacy-policy.html');
-                                if (await canLaunchUrl(url)) await launchUrl(url);
+                                final url = Uri.parse(
+                                    'https://sleepora.app/privacy-policy.html');
+                                if (await canLaunchUrl(url)) {
+                                  await launchUrl(url,
+                                      mode: LaunchMode.externalApplication);
+                                }
                               },
                               child: Text(_loc.t('LoginPrivacy'), textAlign: TextAlign.center, style: const TextStyle(color: Colors.white24, fontSize: 11)),
                             ),
@@ -301,9 +331,10 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
         decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16)),
         child: loading
           ? const Center(child: SizedBox(width: 22, height: 22, child: CircularProgressIndicator(color: Colors.black, strokeWidth: 2)))
-          : const Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-              Icon(Icons.apple, color: Colors.black, size: 22), SizedBox(width: 10),
-              Text('Apple ile Giriş Yap', style: TextStyle(color: Colors.black, fontSize: 16, fontWeight: FontWeight.w600)),
+          : Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+              Image.asset('assets/images/apple_login.png', width: 24, height: 24),
+              const SizedBox(width: 10),
+              Text(_loc.t('LoginApple'), style: const TextStyle(color: Colors.black, fontSize: 16, fontWeight: FontWeight.w600)),
             ]),
       ),
     );
@@ -319,9 +350,9 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
         child: loading
           ? const Center(child: SizedBox(width: 22, height: 22, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2)))
           : Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-              SizedBox(width: 20, height: 20, child: CustomPaint(painter: _GoogleLogoPainter())),
+              Image.asset('assets/images/google_login.png', width: 24, height: 24),
               const SizedBox(width: 10),
-              const Text('Google ile Giriş Yap', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w600)),
+              Text(_loc.t('LoginGoogle'), style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w600)),
             ]),
       ),
     );
