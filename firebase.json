@@ -1,16 +1,1 @@
-{
-  "hosting": {
-    "public": "website",
-    "ignore": [
-      "firebase.json",
-      "**/.*",
-      "**/node_modules/**"
-    ],
-    "rewrites": [
-      {
-        "source": "**",
-        "destination": "/index.html"
-      }
-    ]
-  }
-}
+{"hosting":{"public":"website","ignore":["firebase.json","**/.*","**/node_modules/**"],"rewrites":[{"source":"**","destination":"/index.html"}]},"flutter":{"platforms":{"android":{"default":{"projectId":"sleepora-89902","appId":"1:461986109206:android:6414d1e6ea63dbcd96a237","fileOutput":"android/app/google-services.json"}},"ios":{"default":{"projectId":"sleepora-89902","appId":"1:461986109206:ios:6094dd2d4efb626896a237","uploadDebugSymbols":false,"fileOutput":"ios/Runner/GoogleService-Info.plist"}},"dart":{"lib/firebase_options.dart":{"projectId":"sleepora-89902","configurations":{"android":"1:461986109206:android:6414d1e6ea63dbcd96a237","ios":"1:461986109206:ios:6094dd2d4efb626896a237"}}}}}}

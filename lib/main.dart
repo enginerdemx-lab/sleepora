@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
@@ -15,12 +16,17 @@ import 'services/auth_service.dart';
 import 'screens/sounds_screen.dart';
 import 'games/minesweeper/minesweeper_progress_service.dart';
 import 'services/ad_service.dart';
+import 'services/remote_config_service.dart';
+
+/// Kritik servisler (Firebase + Auth + Lokalizasyon) hazır olduğunda tamamlanır.
+/// SplashScreen, ana ekrana geçmeden önce bunu (kısa bir üst sınırla) bekler.
+final Completer<void> appCriticalReady = Completer<void>();
 
 void main() async {
   // ───── 1. Flutter Engine Binding (HER ŞEYDEN ÖNCE) ─────
   WidgetsFlutterBinding.ensureInitialized();
 
-  // ───── 2. Platform ve yönelim ayarları ─────
+  // ───── 2. Platform ve yönelim ayarları (hızlı) ─────
   await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
   SystemChrome.setSystemUIOverlayStyle(
     const SystemUiOverlayStyle(
@@ -29,7 +35,23 @@ void main() async {
     ),
   );
 
-  // ───── 3. Firebase Başlat (Açık konfigürasyon ile) ─────
+  // ───── 3. UI'YI HEMEN BAŞLAT ─────
+  // KRİTİK: Tüm ağır servis başlatmaları (Firebase, Auth, Audio, RemoteConfig,
+  // Favoriler...) artık runApp'TAN SONRA, arka planda yapılıyor. Eskiden hepsi
+  // runApp'tan önce sırayla await ediliyordu; bu yüzden native açılış (renk)
+  // ekranı 5-8 sn donuk bekliyordu. Şimdi splash + logo neredeyse anında
+  // görünüyor, servisler splash gösterilirken yükleniyor.
+  runApp(const SleeporaApp());
+
+  // Servisleri arka planda başlat — first frame'i bloklamaz.
+  unawaited(_initServices());
+}
+
+/// Tüm servis başlatmaları. runApp'tan sonra arka planda koşar.
+/// Kritik üçlü (Firebase + Auth + Lokalizasyon) bitince [appCriticalReady]
+/// tamamlanır ve splash ana ekrana geçebilir; kalan servisler geçişi bloklamaz.
+Future<void> _initServices() async {
+  // ───── Kritik: Firebase ─────
   try {
     await Firebase.initializeApp(
       options: DefaultFirebaseOptions.currentPlatform,
@@ -39,7 +61,7 @@ void main() async {
     debugPrint('❌ Firebase init HATA: $e');
   }
 
-  // ───── 4. Auth Servisi Başlat (Firebase'den sonra) ─────
+  // ───── Kritik: Auth (Firebase'den sonra) ─────
   try {
     await AuthService().init();
     debugPrint('✅ AuthService başarıyla başlatıldı.');
@@ -47,21 +69,31 @@ void main() async {
     debugPrint('❌ AuthService init HATA: $e');
   }
 
-  // ───── 5. Lokalizasyon ve Bildirim Servisleri ─────
+  // ───── Kritik: Lokalizasyon ─────
   try {
     await LocalizationService().init();
   } catch (_) {}
+
+  // Kritik üçlü hazır — splash artık ana ekrana geçebilir.
+  if (!appCriticalReady.isCompleted) appCriticalReady.complete();
+
+  // ───── Bundan sonrası splash geçişini BLOKLAMAZ ─────
+
+  // Bildirim servisi
   try {
     await NotificationService().init();
   } catch (_) {}
 
-  // ───── 6. Ses ve Arka Plan Servisleri ─────
+  // Ses ve arka plan servisleri
   try {
     final session = await AudioSession.instance;
+    // Açılışta mixWithOthers: app açılınca başka uygulamanın müziği KESİLMESİN.
+    // Sleepora kendi sesini çaldığında oturum exclusive yapılıp dış ses
+    // durdurulur (bkz. home_screen _activateSleeporaAudio).
     await session.configure(
       const AudioSessionConfiguration(
         avAudioSessionCategory: AVAudioSessionCategory.playback,
-        avAudioSessionCategoryOptions: AVAudioSessionCategoryOptions.none,
+        avAudioSessionCategoryOptions: AVAudioSessionCategoryOptions.mixWithOthers,
         avAudioSessionMode: AVAudioSessionMode.defaultMode,
         avAudioSessionRouteSharingPolicy:
             AVAudioSessionRouteSharingPolicy.defaultPolicy,
@@ -99,7 +131,7 @@ void main() async {
     debugPrint('Audio init error: $e');
   }
 
-  // ───── 7. Minesweeper Progress Servisi (coin / level / tema) ─────
+  // Minesweeper Progress Servisi (coin / level / tema)
   try {
     await MinesweeperProgressService().init();
     debugPrint('✅ MinesweeperProgressService başarıyla başlatıldı.');
@@ -107,21 +139,31 @@ void main() async {
     debugPrint('❌ MinesweeperProgressService init HATA: $e');
   }
 
-  // ───── 8. AdMob başlat ─────
+  // AdMob
   try {
     await AdService().initialize();
   } catch (e) {
     debugPrint('❌ AdService başlatılamadı: $e');
   }
 
-  // ───── 9. Uygulamayı Başlat ─────
-  runApp(const SleeporaApp());
+  // Uzaktan yapılandırma (Admin panel → config/app)
+  try {
+    await RemoteConfigService().init().timeout(const Duration(seconds: 3));
+  } catch (e) {
+    debugPrint('⚠️ RemoteConfig yüklenemedi, varsayılanlar kullanılacak: $e');
+  }
 
-  // ───── 10. Abonelik Servisi (IAP) arka planda başlasın ─────
+  // Favorileri geri yükle (yerel + Firestore)
+  try {
+    await loadFavoritesIntoAllSounds().timeout(const Duration(seconds: 3));
+  } catch (e) {
+    debugPrint('⚠️ Favoriler yüklenemedi: $e');
+  }
+
+  // Abonelik Servisi (IAP) arka planda
   SubscriptionService().init();
 
-  // ───── 11. iOS App Tracking dialog (kısa gecikmeyle, Apple önerisi) ─────
-  // ignore: discarded_futures
+  // iOS App Tracking dialog (kısa gecikmeyle, Apple önerisi)
   Future.delayed(const Duration(seconds: 3), () {
     AdService().requestTrackingIfNeeded();
   });

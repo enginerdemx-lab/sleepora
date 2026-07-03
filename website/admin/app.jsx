@@ -53,6 +53,38 @@ const fmtDate = (ts) => {
   return d.toLocaleDateString("tr-TR", { day: "2-digit", month: "short", year: "numeric" });
 };
 
+// Bitiş tarihinden bugüne kalan gün sayısı. Süresi geçmişse negatif döner;
+// geçerli abonelik yoksa null.
+const daysUntil = (ts) => {
+  const d = tsToDate(ts);
+  if (!d || isNaN(d.getTime())) return null;
+  const diffMs = d.getTime() - Date.now();
+  return Math.ceil(diffMs / 86400000);
+};
+
+// "5 gün kaldı" / "Bugün biter" / "Süresi 3 gün önce doldu" formatı
+const fmtRemaining = (ts) => {
+  const n = daysUntil(ts);
+  if (n === null) return "—";
+  if (n > 1) return `${n} gün kaldı`;
+  if (n === 1) return "Yarın biter";
+  if (n === 0) return "Bugün biter";
+  return `${-n} gün önce doldu`;
+};
+
+// Süresi dolmuş (lifetime olmayan, bitiş tarihi geçmiş) abonelik mi?
+// Mobil uygulamadaki isPremium mantığını birebir yansıtır: end <= now → dolmuş.
+const isExpiredPremium = (u) => {
+  if (!u || !u.is_premium) return false;
+  if (u.subscription_plan === "lifetime") return false;
+  const d = tsToDate(u.subscription_end);
+  if (!d || isNaN(d.getTime())) return false; // bitiş yoksa süresiz say → aktif
+  return d.getTime() <= Date.now();
+};
+
+// Şu an gerçekten aktif premium mi? (süresi dolanlar hariç tutulur)
+const isActivePremium = (u) => !!(u && u.is_premium) && !isExpiredPremium(u);
+
 const fmtRelative = (ts) => {
   const d = tsToDate(ts);
   if (!d || isNaN(d.getTime())) return "–";
@@ -161,7 +193,8 @@ const DataProvider = ({ children }) => {
   // Derived metrics
   const metrics = useMemo(() => {
     const total = users.length;
-    const premium = users.filter(u => u.is_premium).length;
+    // Yalnızca süresi geçmemiş (gerçekten aktif) abonelikleri say.
+    const premium = users.filter(isActivePremium).length;
     const conv = total > 0 ? (premium / total) * 100 : 0;
     const unread = feedbacks.filter(f => !f.is_read).length;
     const now = new Date();
@@ -196,6 +229,7 @@ const useData = () => React.useContext(DataContext);
 // ───── Sidebar ─────
 const PAGES = [
   { id: "dash",        label: "Dashboard",         icon: "home" },
+  { id: "analytics",   label: "Analitik",          icon: "trend" },
   { id: "users",       label: "Kullanıcılar",      icon: "users" },
   { id: "premium",     label: "Premium",           icon: "star" },
   { id: "feedback",    label: "Geri Bildirimler",  icon: "chat" },
@@ -203,6 +237,7 @@ const PAGES = [
   { id: "sleep",       label: "Uyku Verileri",     icon: "moon" },
 ];
 const TOOLS = [
+  { id: "config", label: "Yapılandırma", icon: "sparkle" },
   { id: "settings", label: "Ayarlar", icon: "settings" },
 ];
 
@@ -288,11 +323,13 @@ const Topbar = ({ page, onRefresh, onMenuToggle }) => {
 
   const titles = {
     dash:        ["Genel", "bakış",        "Anasayfa · Dashboard"],
+    analytics:   ["Analitik", "raporları", "Anasayfa · Analitik"],
     users:       ["Tüm",  "kullanıcılar", "Anasayfa · Kullanıcılar"],
     premium:     ["Premium", "üyeler",    "Anasayfa · Premium"],
     feedback:    ["Geri",  "bildirimler", "Anasayfa · Geri Bildirimler"],
     leaderboard: ["Lider", "tablosu",     "Anasayfa · Leaderboard"],
     sleep:       ["Uyku",  "verileri",    "Anasayfa · Uyku Verileri"],
+    config:      ["Uygulama", "yapılandırması", "Anasayfa · Yapılandırma"],
     settings:    ["Sistem", "ayarları",   "Anasayfa · Ayarlar"],
   };
   const [t1, t2, crumb] = titles[page] || titles.dash;
@@ -675,7 +712,7 @@ const Funnel = () => {
   const active7 = users.filter(u => {
     const d = tsToDate(u.last_login); return d && (now - d.getTime() < 7 * 86400000);
   }).length;
-  const premium = users.filter(u => u.is_premium).length;
+  const premium = users.filter(isActivePremium).length;
 
   const steps = [
     { l: "Hesap oluşturma", v: total },
@@ -998,6 +1035,8 @@ const UsersPage = () => {
   const toast = useToast();
   const [q, setQ] = useState("");
   const [filter, setFilter] = useState("all");
+  // Premium süre seçimi modal'ı: { user, mode: 'grant' | 'extend' } veya null
+  const [premiumModal, setPremiumModal] = useState(null);
 
   const handleSyncOldUsers = async () => {
     if (!window._fb || !window._fb.setDoc) {
@@ -1025,18 +1064,65 @@ const UsersPage = () => {
     }
   };
 
-  const handleTogglePremium = async (u) => {
-    if (!window._fb || !window._fb.updateDoc) return;
-    
+  // Premium ver — duration: gün cinsinden (null/0 → lifetime)
+  // Flutter SubscriptionService.syncPremiumFromFirestore alanları okur:
+  //   • is_premium (bool)
+  //   • subscription_plan ('lifetime' | 'monthly' | 'yearly' | 'admin_manual')
+  //   • subscription_end (Timestamp veya null/lifetime için yok)
+  // Plan == 'lifetime' → mobil tarafta "Ömür Boyu" gösterir.
+  // subscription_end set ise → mobil tarafta "{N} gün kaldı" gösterir.
+  const handleGrantPremium = async (u, { plan, durationDays, endDate }) => {
+    if (!window._fb || !window._fb.updateDoc) {
+      toast.push("Firebase yüklenmedi — sayfayı yenileyin", "error");
+      return;
+    }
     try {
-      const { doc, updateDoc, serverTimestamp } = window._fb;
+      const { doc, updateDoc, serverTimestamp, Timestamp } = window._fb;
+
+      // Bitiş tarihini hesapla
+      let endTs = null;
+      if (plan !== 'lifetime') {
+        let end = endDate;
+        if (!end && durationDays) {
+          end = new Date(Date.now() + durationDays * 86400000);
+        }
+        if (end) {
+          endTs = Timestamp ? Timestamp.fromDate(end) : end;
+        }
+      }
+
       await updateDoc(doc(window._fbDb, "users", u.id), {
-        is_premium: !u.is_premium,
-        subscription_plan: !u.is_premium ? "Admin Manuel" : null,
-        subscription_start: !u.is_premium ? serverTimestamp() : null
+        is_premium: true,
+        subscription_plan: plan,
+        subscription_start: serverTimestamp(),
+        subscription_end: endTs,
+        subscription_platform: 'admin',
       });
       refresh();
-      toast.push("Premium durumu güncellendi!", "success");
+      setPremiumModal(null);
+      toast.push(
+        plan === 'lifetime'
+          ? "Ömür boyu premium tanımlandı"
+          : `Premium tanımlandı (${durationDays} gün)`,
+        "success"
+      );
+    } catch (e) {
+      toast.push("Hata: " + e.message, "error");
+    }
+  };
+
+  const handleRevokePremium = async (u) => {
+    if (!window._fb || !window._fb.updateDoc) return;
+    try {
+      const { doc, updateDoc } = window._fb;
+      await updateDoc(doc(window._fbDb, "users", u.id), {
+        is_premium: false,
+        subscription_plan: null,
+        subscription_end: null,
+      });
+      refresh();
+      setPremiumModal(null);
+      toast.push("Premium iptal edildi", "success");
     } catch (e) {
       toast.push("Hata: " + e.message, "error");
     }
@@ -1134,19 +1220,47 @@ const UsersPage = () => {
                         <span className={`ubadge ${u.is_premium ? "premium" : ""}`}>
                           {u.is_premium ? `★ ${u.subscription_plan || "Premium"}` : "Ücretsiz"}
                         </span>
+                        {u.is_premium && (
+                          <div style={{ fontSize: 10, color: "var(--fg-2)", marginTop: 3 }}>
+                            {u.subscription_plan === "lifetime"
+                              ? "♾️ Ömür Boyu"
+                              : u.subscription_end
+                                ? fmtRemaining(u.subscription_end)
+                                : "Süre tanımsız"}
+                          </div>
+                        )}
                       </td>
                       <td style={{ padding: "12px 20px", textAlign: "right" }}>
-                        <button 
-                          onClick={() => handleTogglePremium(u)}
-                          style={{
-                            background: u.is_premium ? "oklch(0.3 0.05 15)" : "oklch(0.80 0.13 75)",
-                            color: u.is_premium ? "var(--fg-1)" : "#fff",
-                            border: "none", borderRadius: 4, padding: "5px 10px", fontSize: 11, cursor: "pointer", fontWeight: "bold",
-                            minWidth: 85
-                          }}
-                        >
-                          {u.is_premium ? "İptal Et" : "Premium Yap"}
-                        </button>
+                        <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
+                          <button
+                            onClick={() => setPremiumModal({ user: u, mode: u.is_premium ? 'extend' : 'grant' })}
+                            style={{
+                              background: u.is_premium ? "oklch(0.45 0.10 230)" : "oklch(0.80 0.13 75)",
+                              color: "#fff",
+                              border: "none", borderRadius: 4, padding: "5px 10px", fontSize: 11, cursor: "pointer", fontWeight: "bold",
+                              minWidth: 85
+                            }}
+                          >
+                            {u.is_premium ? "Düzenle" : "Premium Yap"}
+                          </button>
+                          {u.is_premium && (
+                            <button
+                              onClick={() => {
+                                if (confirm(`${u.email || u.display_name || u.id} için premium iptal edilsin mi?`)) {
+                                  handleRevokePremium(u);
+                                }
+                              }}
+                              style={{
+                                background: "oklch(0.3 0.05 15)",
+                                color: "var(--fg-1)",
+                                border: "1px solid var(--line-2)", borderRadius: 4, padding: "5px 10px", fontSize: 11, cursor: "pointer",
+                                minWidth: 65
+                              }}
+                            >
+                              İptal
+                            </button>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   );
@@ -1156,6 +1270,183 @@ const UsersPage = () => {
           </div>
         )}
       </div>
+      {premiumModal && (
+        <PremiumGrantModal
+          user={premiumModal.user}
+          mode={premiumModal.mode}
+          onCancel={() => setPremiumModal(null)}
+          onGrant={(opts) => handleGrantPremium(premiumModal.user, opts)}
+          onRevoke={() => handleRevokePremium(premiumModal.user)}
+        />
+      )}
+    </div>
+  );
+};
+
+// ───── Premium grant modal ─────
+// Admin'in manuel premium tanımladığı sürede aboneliğin türünü ve süresini
+// seçmesini sağlar. Bitiş tarihi seçilirse Flutter SubscriptionService bunu
+// `subscription_end` alanından okur ve mobil UI'da "{N} gün kaldı" gösterir.
+const PremiumGrantModal = ({ user, mode, onCancel, onGrant, onRevoke }) => {
+  const [customDate, setCustomDate] = useState("");
+  const presets = [
+    { label: "7 gün", days: 7, plan: "admin_manual" },
+    { label: "30 gün (1 Ay)", days: 30, plan: "monthly" },
+    { label: "90 gün (3 Ay)", days: 90, plan: "admin_manual" },
+    { label: "365 gün (1 Yıl)", days: 365, plan: "yearly" },
+    { label: "♾️ Ömür Boyu", days: null, plan: "lifetime" },
+  ];
+
+  const submitCustom = () => {
+    if (!customDate) return;
+    const d = new Date(customDate);
+    if (isNaN(d.getTime())) return;
+    onGrant({ plan: "admin_manual", endDate: d });
+  };
+
+  const currentEndStr = user.is_premium && user.subscription_end
+    ? fmtDate(user.subscription_end)
+    : null;
+
+  return (
+    <div
+      onClick={onCancel}
+      style={{
+        position: "fixed", inset: 0, zIndex: 1000,
+        background: "rgba(0,0,0,0.55)",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        padding: 20,
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: "var(--bg-1)",
+          border: "1px solid var(--line-2)",
+          borderRadius: "var(--r-lg)",
+          maxWidth: 460, width: "100%",
+          padding: 24,
+          boxShadow: "0 24px 64px rgba(0,0,0,0.5)",
+        }}
+      >
+        {/* Başlık */}
+        <div style={{ marginBottom: 18 }}>
+          <h3 style={{ margin: 0, color: "var(--fg-0)", fontSize: 18, fontWeight: 600 }}>
+            {mode === "extend" ? "Premium Süreyi Güncelle" : "Premium Tanımla"}
+          </h3>
+          <div style={{ marginTop: 4, color: "var(--fg-2)", fontSize: 12 }}>
+            {user.display_name || user.email || user.id}
+          </div>
+          {currentEndStr && (
+            <div style={{ marginTop: 8, padding: "8px 12px", background: "var(--bg-2)", borderRadius: 6, fontSize: 12, color: "var(--fg-1)" }}>
+              Mevcut bitiş: <strong>{currentEndStr}</strong>
+              {user.subscription_plan === "lifetime" && " (Ömür Boyu)"}
+            </div>
+          )}
+          <div style={{ marginTop: 8, color: "var(--fg-2)", fontSize: 11, lineHeight: 1.5 }}>
+            Süreyi seçince <b>bugünden itibaren</b> hesaplanır. Mevcut süreye eklemez, değiştirir.
+          </div>
+        </div>
+
+        {/* Hazır süre butonları */}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 16 }}>
+          {presets.map((p) => (
+            <button
+              key={p.label}
+              onClick={() => onGrant({ plan: p.plan, durationDays: p.days })}
+              style={{
+                background: p.plan === "lifetime" ? "linear-gradient(135deg, oklch(0.55 0.18 290), oklch(0.5 0.2 320))" : "var(--bg-2)",
+                color: p.plan === "lifetime" ? "#fff" : "var(--fg-0)",
+                border: "1px solid var(--line-2)",
+                borderRadius: 8,
+                padding: "12px 14px",
+                fontSize: 13,
+                fontWeight: 600,
+                cursor: "pointer",
+                textAlign: "left",
+              }}
+            >
+              {p.label}
+            </button>
+          ))}
+        </div>
+
+        {/* Özel tarih */}
+        <div style={{ marginBottom: 16 }}>
+          <div style={{ fontSize: 12, color: "var(--fg-2)", marginBottom: 6 }}>Veya özel bitiş tarihi:</div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <input
+              type="date"
+              value={customDate}
+              min={new Date().toISOString().split("T")[0]}
+              onChange={(e) => setCustomDate(e.target.value)}
+              style={{
+                flex: 1,
+                background: "var(--bg-2)",
+                color: "var(--fg-0)",
+                border: "1px solid var(--line-2)",
+                borderRadius: 6,
+                padding: "8px 10px",
+                fontSize: 13,
+              }}
+            />
+            <button
+              onClick={submitCustom}
+              disabled={!customDate}
+              style={{
+                background: customDate ? "var(--accent)" : "var(--bg-3)",
+                color: "#fff",
+                border: "none",
+                borderRadius: 6,
+                padding: "8px 14px",
+                fontSize: 12,
+                fontWeight: 600,
+                cursor: customDate ? "pointer" : "not-allowed",
+                opacity: customDate ? 1 : 0.5,
+              }}
+            >
+              Uygula
+            </button>
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 18, paddingTop: 14, borderTop: "1px solid var(--line)" }}>
+          {mode === "extend" ? (
+            <button
+              onClick={() => {
+                if (confirm("Premium aboneliği iptal edilsin mi?")) onRevoke();
+              }}
+              style={{
+                background: "transparent",
+                color: "oklch(0.72 0.16 25)",
+                border: "1px solid oklch(0.42 0.12 25)",
+                borderRadius: 6,
+                padding: "7px 12px",
+                fontSize: 12,
+                fontWeight: 600,
+                cursor: "pointer",
+              }}
+            >
+              Premium'u İptal Et
+            </button>
+          ) : <span />}
+          <button
+            onClick={onCancel}
+            style={{
+              background: "var(--bg-2)",
+              color: "var(--fg-1)",
+              border: "1px solid var(--line-2)",
+              borderRadius: 6,
+              padding: "7px 14px",
+              fontSize: 12,
+              cursor: "pointer",
+            }}
+          >
+            Vazgeç
+          </button>
+        </div>
+      </div>
     </div>
   );
 };
@@ -1163,7 +1454,8 @@ const UsersPage = () => {
 // ───── Premium page ─────
 const PremiumPage = () => {
   const { users, loading } = useData();
-  const premiums = useMemo(() => users.filter(u => u.is_premium)
+  // Süresi dolanları hariç tut — yalnızca gerçekten aktif abonelikler listelenir.
+  const premiums = useMemo(() => users.filter(isActivePremium)
     .sort((a, b) => (tsToDate(b.subscription_start)?.getTime() || 0) - (tsToDate(a.subscription_start)?.getTime() || 0)), [users]);
 
   return (
@@ -1216,7 +1508,16 @@ const PremiumPage = () => {
                       </td>
                       <td style={{ padding: "12px 12px", color: "var(--fg-1)" }}>{fmtDate(u.subscription_start)}</td>
                       <td style={{ padding: "12px 12px", color: "var(--fg-1)" }}>
-                        {u.subscription_plan === "lifetime" ? "♾️ Ömür Boyu" : fmtDate(u.subscription_end)}
+                        {u.subscription_plan === "lifetime" ? (
+                          <span>♾️ Ömür Boyu</span>
+                        ) : u.subscription_end ? (
+                          <div>
+                            <div>{fmtDate(u.subscription_end)}</div>
+                            <div style={{ fontSize: 10, color: (daysUntil(u.subscription_end) ?? 0) < 0 ? "oklch(0.72 0.16 25)" : "var(--fg-2)", marginTop: 2 }}>
+                              {fmtRemaining(u.subscription_end)}
+                            </div>
+                          </div>
+                        ) : "—"}
                       </td>
                       <td style={{ padding: "12px 12px", color: "var(--fg-1)" }}>{u.subscription_platform || "—"}</td>
                     </tr>
@@ -1459,27 +1760,540 @@ const LeaderboardPage = () => {
   );
 };
 
-// ───── Sleep page (no real data yet) ─────
-const SleepPage = () => (
-  <div className="panel">
-    <div className="panel-h">
-      <div className="panel-h-left">
-        <h3 className="panel-title">Uyku verileri</h3>
-        <span className="panel-sub">Toplu uyku raporları</span>
-      </div>
+// ───── Sleep page — gerçek veri: users/{uid}/sleep_sessions ─────
+const SleepPage = () => {
+  const { users, loading: usersLoading } = useData();
+  const [state, setState] = useState({ loading: true, error: null, sessions: [] });
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      if (!window._fbDb || !window._fb) {
+        setState({ loading: false, error: "Firebase hazır değil", sessions: [] });
+        return;
+      }
+      if (usersLoading) return; // kullanıcı listesi gelene kadar bekle
+      setState((s) => ({ ...s, loading: true, error: null }));
+      try {
+        const { collection, getDocs, query, orderBy, limit } = window._fb;
+        const db = window._fbDb;
+        const all = [];
+        // Her kullanıcının sleep_sessions alt koleksiyonunu oku (≈9 kullanıcı).
+        for (const u of users) {
+          try {
+            const snap = await getDocs(query(
+              collection(db, "users", u.id, "sleep_sessions"),
+              orderBy("start_time", "desc"),
+              limit(30)
+            ));
+            snap.forEach((d) => {
+              const m = d.data() || {};
+              all.push({
+                id: u.id + "/" + d.id,
+                uid: u.id,
+                name: u.display_name || u.baby_name || u.email || "—",
+                start: m.start_time || null,
+                duration: Number(m.duration_minutes) || 0,
+                sound: m.sound_name || "—",
+                date: m.date || "",
+              });
+            });
+          } catch (e) { /* bu kullanıcıda alt koleksiyon yok / erişilemiyor */ }
+        }
+        all.sort((a, b) => (new Date(b.start || 0)) - (new Date(a.start || 0)));
+        if (!cancelled) setState({ loading: false, error: null, sessions: all });
+      } catch (e) {
+        if (!cancelled) setState({ loading: false, error: e.message || "Yüklenemedi", sessions: [] });
+      }
+    };
+    load();
+    return () => { cancelled = true; };
+  }, [users, usersLoading]);
+
+  const { loading, error, sessions } = state;
+  const totalSessions = sessions.length;
+  const totalMin = sessions.reduce((s, x) => s + x.duration, 0);
+  const avgMin = totalSessions ? Math.round(totalMin / totalSessions) : 0;
+  const activeUsers = new Set(sessions.map((s) => s.uid)).size;
+  const fmtDur = (m) => (m >= 60 ? `${Math.floor(m / 60)}sa ${m % 60}dk` : `${m} dk`);
+  const fmtHour = (iso) => {
+    if (!iso) return "–";
+    const d = new Date(iso);
+    return isNaN(d.getTime())
+      ? "–"
+      : d.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" });
+  };
+
+  const stat = (label, value) => (
+    <div style={{ flex: 1, minWidth: 130, padding: "14px 16px", border: "1px solid var(--line)", borderRadius: 12 }}>
+      <div style={{ fontSize: 22, fontWeight: 700, color: "var(--fg)" }}>{value}</div>
+      <div style={{ fontSize: 11, color: "var(--fg-2)", textTransform: "uppercase", letterSpacing: "0.06em", marginTop: 4 }}>{label}</div>
     </div>
-    <div className="panel-body">
-      <div className="empty" style={{ padding: 60 }}>
-        <div className="empty-glyph"><Icon name="moon" size={20} /></div>
-        <div className="empty-title">Uyku verisi entegrasyonu hazır değil</div>
-        <div className="empty-sub">
-          Sleepora uygulaması uyku oturumlarını Firestore'a yazmaya başladığında bu panel
-          otomatik olarak doluyor olacak. Şu an için kayıtlı oturum yok.
+  );
+
+  return (
+    <div className="panel">
+      <div className="panel-h">
+        <div className="panel-h-left">
+          <h3 className="panel-title">Uyku verileri</h3>
+          <span className="panel-sub">
+            {loading ? "Yükleniyor…" : `${totalSessions} oturum · ${activeUsers} kullanıcı`}
+          </span>
         </div>
       </div>
+      <div className="panel-body">
+        {loading ? (
+          <div className="empty"><div className="empty-sub">Yükleniyor…</div></div>
+        ) : error ? (
+          <div className="empty" style={{ padding: 48 }}>
+            <div className="empty-glyph"><Icon name="moon" size={20} /></div>
+            <div className="empty-title">Uyku verileri okunamadı</div>
+            <div className="empty-sub">{error}</div>
+          </div>
+        ) : totalSessions === 0 ? (
+          <div className="empty" style={{ padding: 48 }}>
+            <div className="empty-glyph"><Icon name="moon" size={20} /></div>
+            <div className="empty-title">Henüz kayıtlı uyku oturumu yok</div>
+            <div className="empty-sub">
+              Kullanıcılar uygulamada ses çalıp uyku takibi yaptıkça oturumlar burada görünecek.
+            </div>
+          </div>
+        ) : (
+          <div>
+            <div style={{ display: "flex", gap: 12, flexWrap: "wrap", padding: "4px 4px 18px" }}>
+              {stat("Toplam Oturum", totalSessions)}
+              {stat("Toplam Süre", fmtDur(totalMin))}
+              {stat("Ortalama Süre", fmtDur(avgMin))}
+              {stat("Aktif Kullanıcı", activeUsers)}
+            </div>
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                <thead>
+                  <tr style={{ color: "var(--fg-2)", fontSize: 11, textTransform: "uppercase", letterSpacing: "0.06em" }}>
+                    <th style={{ textAlign: "left", padding: "12px 20px", borderBottom: "1px solid var(--line)" }}>Kullanıcı</th>
+                    <th style={{ textAlign: "left", padding: "12px 12px", borderBottom: "1px solid var(--line)" }}>Tarih</th>
+                    <th style={{ textAlign: "left", padding: "12px 12px", borderBottom: "1px solid var(--line)" }}>Başlangıç</th>
+                    <th style={{ textAlign: "left", padding: "12px 12px", borderBottom: "1px solid var(--line)" }}>Süre</th>
+                    <th style={{ textAlign: "left", padding: "12px 12px", borderBottom: "1px solid var(--line)" }}>Ses</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {sessions.slice(0, 60).map((s) => (
+                    <tr key={s.id} style={{ borderBottom: "1px solid var(--line)" }}>
+                      <td style={{ padding: "12px 20px", color: "var(--fg)" }}>{s.name}</td>
+                      <td style={{ padding: "12px 12px", color: "var(--fg-2)" }}>{s.date || fmtDate(s.start)}</td>
+                      <td style={{ padding: "12px 12px", color: "var(--fg-2)" }}>{fmtHour(s.start)}</td>
+                      <td style={{ padding: "12px 12px", color: "var(--fg)" }}>{fmtDur(s.duration)}</td>
+                      <td style={{ padding: "12px 12px", color: "var(--fg-2)" }}>{s.sound}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
-  </div>
-);
+  );
+};
+
+// ───── Analitik sayfası ─────
+const SOUND_CATALOG = [
+  "Pış Pış", "Eee Eee", "Dandini", "Süpürge", "Kolik", "Kabin Sesi",
+  "Uyusunda Büyüsün", "Yıldız Tozu", "Pış Pış + Süpürge", "Beyaz Gürültü",
+  "Konuşma", "Yol Sesi", "Yağmur", "Saç Kurutma", "Pış Pış 2", "Rüzgar",
+  "Dalga", "Duş", "Helikopter", "Tren", "Vantilatör", "Kalp Atışı",
+  "Kuş Sesi", "Su Sesi", "Çamaşır Makinesi", "Trafik",
+];
+const LANG_LABELS = ["Türkçe", "İngilizce", "İspanyolca", "Fransızca", "Almanca", "Rusça", "Arapça"];
+
+const AnalyticsPage = () => {
+  const { users, loading: usersLoading } = useData();
+  const [agg, setAgg] = useState({ loading: true, error: null, byName: {}, usersWithFav: 0, usersWithMix: 0, totalMixes: 0, mixSoundCount: 0 });
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      if (!window._fbDb || !window._fb) { setAgg(a => ({ ...a, loading: false, error: "Firebase hazır değil" })); return; }
+      if (usersLoading) return;
+      setAgg(a => ({ ...a, loading: true, error: null }));
+      try {
+        const { collection, getDocs } = window._fb;
+        const db = window._fbDb;
+        const byName = {};
+        const bump = (n, k, v = 1) => {
+          if (!n) return;
+          byName[n] = byName[n] || { fav: 0, favPlays: 0, sessions: 0, minutes: 0, mixUses: 0 };
+          byName[n][k] += v;
+        };
+        let usersWithFav = 0, usersWithMix = 0, totalMixes = 0, mixSoundCount = 0;
+        for (const u of users) {
+          try {
+            const favSnap = await getDocs(collection(db, "users", u.id, "favorites"));
+            if (favSnap.size > 0) usersWithFav++;
+            favSnap.forEach(d => { const m = d.data() || {}; bump(m.name, "fav"); bump(m.name, "favPlays", Number(m.play_count) || 0); });
+          } catch (e) {}
+          try {
+            const sSnap = await getDocs(collection(db, "users", u.id, "sleep_sessions"));
+            sSnap.forEach(d => { const m = d.data() || {}; bump(m.sound_name, "sessions"); bump(m.sound_name, "minutes", Number(m.duration_minutes) || 0); });
+          } catch (e) {}
+          try {
+            const mSnap = await getDocs(collection(db, "users", u.id, "mixes"));
+            if (mSnap.size > 0) usersWithMix++;
+            mSnap.forEach(d => { const m = d.data() || {}; totalMixes++; const arr = Array.isArray(m.sounds) ? m.sounds : []; mixSoundCount += arr.length; arr.forEach(s => bump(s && s.name, "mixUses")); });
+          } catch (e) {}
+        }
+        if (!cancelled) setAgg({ loading: false, error: null, byName, usersWithFav, usersWithMix, totalMixes, mixSoundCount });
+      } catch (e) {
+        if (!cancelled) setAgg(a => ({ ...a, loading: false, error: e.message || "Yüklenemedi" }));
+      }
+    };
+    load();
+    return () => { cancelled = true; };
+  }, [users, usersLoading]);
+
+  const now = Date.now();
+  const day = 86400000;
+  const num = (x) => Number(x) || 0;
+  const userCount = users.length;
+  const totalPlayMin = users.reduce((s, u) => s + num(u.total_play_time_minutes), 0);
+  const totalSessions = users.reduce((s, u) => s + num(u.session_count), 0);
+  const within = (ts, ms) => { const d = tsToDate(ts); return d && (now - d.getTime() <= ms); };
+  const dau = users.filter(u => within(u.last_login, day)).length;
+  const wau = users.filter(u => within(u.last_login, 7 * day)).length;
+  const mau = users.filter(u => within(u.last_login, 30 * day)).length;
+  const dormant = users.filter(u => { const d = tsToDate(u.last_login); return !d || (now - d.getTime() > 14 * day); }).length;
+  const langCounts = LANG_LABELS.map((_, i) => users.filter(u => num(u.language) === i).length);
+  const maxLang = Math.max(1, ...langCounts);
+
+  const active = users.filter(isActivePremium);
+  const planCounts = {};
+  active.forEach(u => { const p = u.subscription_plan || "diğer"; planCounts[p] = (planCounts[p] || 0) + 1; });
+  const expiringSoon = active
+    .filter(u => { if (u.subscription_plan === "lifetime") return false; const n = daysUntil(u.subscription_end); return n !== null && n >= 0 && n <= 7; })
+    .sort((a, b) => (daysUntil(a.subscription_end) ?? 99) - (daysUntil(b.subscription_end) ?? 99));
+  const recentlyExpired = users
+    .filter(u => { if (!isExpiredPremium(u)) return false; const d = tsToDate(u.subscription_end); return d && (now - d.getTime() <= 30 * day); })
+    .sort((a, b) => (tsToDate(b.subscription_end)?.getTime() || 0) - (tsToDate(a.subscription_end)?.getTime() || 0));
+
+  const { loading, error, byName, usersWithFav, usersWithMix, totalMixes, mixSoundCount } = agg;
+  const soundRows = Object.entries(byName)
+    .map(([name, v]) => ({ name, ...v, score: v.sessions * 3 + v.fav * 2 + v.mixUses }))
+    .sort((a, b) => (b.score - a.score) || (b.minutes - a.minutes));
+  const usedNames = new Set(Object.keys(byName));
+  const unused = SOUND_CATALOG.filter(n => !usedNames.has(n));
+  // ── Faz 3: cihaz / dil / paywall / oyun metrikleri (users'tan) ──
+  const countBy = (fn) => { const m = {}; users.forEach(u => { const k = fn(u); if (k) m[k] = (m[k] || 0) + 1; }); return Object.entries(m).sort((a, b) => b[1] - a[1]); };
+  const platformRows = countBy(u => u.platform);
+  const countryRows = countBy(u => u.country || u.locale);
+  const sawPaywall = users.filter(u => num(u.paywall_views) > 0).length;
+  const convPct = sawPaywall > 0 ? Math.round((active.length / sawPaywall) * 100) : 0;
+  const gameTotals = (() => { const m = {}; users.forEach(u => { const g = u.game_plays; if (g && typeof g === "object") Object.entries(g).forEach(([k, v]) => { m[k] = (m[k] || 0) + (Number(v) || 0); }); }); return Object.entries(m).sort((a, b) => b[1] - a[1]); })();
+  const gameLabel = (k) => ({ QuizGame: "Bilgi Yarışması", Game2048: "2048", BlockPuzzleGame: "Blok Puzzle", MinesweeperLevelSelect: "Mayın Tarlası" }[k] || k);
+  const fmtDur = (m) => (m >= 60 ? `${Math.floor(m / 60)}sa ${m % 60}dk` : `${m} dk`);
+
+  const card = (label, value, hint) => (
+    <div style={{ flex: 1, minWidth: 150, padding: "14px 16px", border: "1px solid var(--line)", borderRadius: 12 }}>
+      <div style={{ fontSize: 22, fontWeight: 700, color: "var(--fg)" }}>{value}</div>
+      <div style={{ fontSize: 11, color: "var(--fg-2)", textTransform: "uppercase", letterSpacing: "0.06em", marginTop: 4 }}>{label}</div>
+      {hint ? <div style={{ fontSize: 11, color: "var(--fg-2)", marginTop: 2 }}>{hint}</div> : null}
+    </div>
+  );
+  const sect = (t) => (
+    <div style={{ fontSize: 12, fontWeight: 700, color: "var(--fg-2)", margin: "22px 4px 12px", textTransform: "uppercase", letterSpacing: "0.06em" }}>{t}</div>
+  );
+  const rowWrap = (kids) => <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>{kids}</div>;
+
+  return (
+    <div className="panel">
+      <div className="panel-h">
+        <div className="panel-h-left">
+          <h3 className="panel-title">Analitik</h3>
+          <span className="panel-sub">{userCount} kullanıcı · {totalSessions.toLocaleString("tr-TR")} oturum</span>
+        </div>
+      </div>
+      <div className="panel-body">
+        {sect("Etkileşim")}
+        {rowWrap([
+          card("Toplam Dinleme", fmtDur(totalPlayMin), null),
+          card("Toplam Oturum", totalSessions.toLocaleString("tr-TR"), null),
+          card("Ort. Dinleme / Kullanıcı", userCount ? fmtDur(Math.round(totalPlayMin / userCount)) : "–", null),
+          card("Ort. Oturum / Kullanıcı", userCount ? (totalSessions / userCount).toFixed(1) : "–", null),
+        ])}
+
+        {sect("Aktiflik")}
+        {rowWrap([
+          card("Bugün Aktif (DAU)", dau, null),
+          card("Bu Hafta (WAU)", wau, null),
+          card("Bu Ay (MAU)", mau, null),
+          card("14+ Gün Dönmeyen", dormant, "churn riski"),
+        ])}
+
+        {sect("Dil Dağılımı")}
+        <div>
+          {LANG_LABELS.map((lbl, i) => (
+            <div key={lbl} style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 7 }}>
+              <div style={{ width: 80, fontSize: 12, color: "var(--fg-2)" }}>{lbl}</div>
+              <div style={{ flex: 1, height: 10, background: "var(--line)", borderRadius: 6, overflow: "hidden" }}>
+                <div style={{ width: `${(langCounts[i] / maxLang) * 100}%`, height: "100%", background: "linear-gradient(90deg, oklch(0.6 0.16 290), oklch(0.55 0.18 280))", borderRadius: 6 }} />
+              </div>
+              <div style={{ width: 34, textAlign: "right", fontSize: 12, color: "var(--fg)" }}>{langCounts[i]}</div>
+            </div>
+          ))}
+        </div>
+
+        {sect("Abonelik Sağlığı")}
+        {rowWrap([
+          card("Aktif Premium", active.length, null),
+          card("7 Gün İçinde Dolacak", expiringSoon.length, "yenileme riski"),
+          card("Son 30 Günde Dolan", recentlyExpired.length, "geri kazanım"),
+        ])}
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 12 }}>
+          {Object.entries(planCounts).map(([p, c]) => (
+            <span key={p} style={{ padding: "5px 12px", borderRadius: 20, border: "1px solid var(--line)", fontSize: 12, color: "var(--fg)" }}>
+              {p} · <b>{c}</b>
+            </span>
+          ))}
+        </div>
+        {expiringSoon.length > 0 && (
+          <div style={{ marginTop: 14 }}>
+            <div style={{ fontSize: 12, color: "var(--fg-2)", marginBottom: 8 }}>Yakında dolacaklar</div>
+            {expiringSoon.slice(0, 8).map(u => (
+              <div key={u.id} style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", borderBottom: "1px solid var(--line)", fontSize: 13 }}>
+                <span style={{ color: "var(--fg)" }}>{u.display_name || u.email || "—"}</span>
+                <span style={{ color: "var(--fg-2)" }}>{fmtRemaining(u.subscription_end)}</span>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {sect("Ses Kullanımı")}
+        {rowWrap([
+          card("Favori Yapan Kullanıcı", usersWithFav, null),
+          card("Mix Yapan Kullanıcı", usersWithMix, null),
+          card("Toplam Mix", totalMixes, null),
+          card("Ort. Ses / Mix", totalMixes ? (mixSoundCount / totalMixes).toFixed(1) : "–", null),
+        ])}
+        {loading ? (
+          <div className="empty"><div className="empty-sub">Ses verileri yükleniyor…</div></div>
+        ) : error ? (
+          <div className="empty" style={{ padding: 32 }}><div className="empty-title">Ses verileri okunamadı</div><div className="empty-sub">{error}</div></div>
+        ) : soundRows.length === 0 ? (
+          <div className="empty" style={{ padding: 32 }}><div className="empty-sub">Henüz ses kullanım verisi yok.</div></div>
+        ) : (
+          <div style={{ overflowX: "auto", marginTop: 12 }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+              <thead>
+                <tr style={{ color: "var(--fg-2)", fontSize: 11, textTransform: "uppercase", letterSpacing: "0.06em" }}>
+                  <th style={{ textAlign: "left", padding: "10px 8px", borderBottom: "1px solid var(--line)" }}>Ses</th>
+                  <th style={{ textAlign: "right", padding: "10px 8px", borderBottom: "1px solid var(--line)" }}>Oturum</th>
+                  <th style={{ textAlign: "right", padding: "10px 8px", borderBottom: "1px solid var(--line)" }}>Süre</th>
+                  <th style={{ textAlign: "right", padding: "10px 8px", borderBottom: "1px solid var(--line)" }}>Favori</th>
+                  <th style={{ textAlign: "right", padding: "10px 8px", borderBottom: "1px solid var(--line)" }}>Mix</th>
+                </tr>
+              </thead>
+              <tbody>
+                {soundRows.slice(0, 26).map(s => (
+                  <tr key={s.name} style={{ borderBottom: "1px solid var(--line)" }}>
+                    <td style={{ padding: "9px 8px", color: "var(--fg)" }}>{s.name}</td>
+                    <td style={{ padding: "9px 8px", textAlign: "right", color: "var(--fg)" }}>{s.sessions}</td>
+                    <td style={{ padding: "9px 8px", textAlign: "right", color: "var(--fg-2)" }}>{fmtDur(s.minutes)}</td>
+                    <td style={{ padding: "9px 8px", textAlign: "right", color: "var(--fg-2)" }}>{s.fav}</td>
+                    <td style={{ padding: "9px 8px", textAlign: "right", color: "var(--fg-2)" }}>{s.mixUses}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {unused.length > 0 && (
+              <div style={{ marginTop: 16 }}>
+                <div style={{ fontSize: 12, color: "var(--fg-2)", marginBottom: 8 }}>Hiç kullanılmayan sesler ({unused.length})</div>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  {unused.map(n => (
+                    <span key={n} style={{ padding: "4px 10px", borderRadius: 16, border: "1px solid var(--line)", fontSize: 12, color: "var(--fg-2)" }}>{n}</span>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {sect("Paywall Hunisi")}
+        {rowWrap([
+          card("Paywall Gördü", sawPaywall, null),
+          card("Aktif Premium", active.length, null),
+          card("Dönüşüm", `%${convPct}`, sawPaywall ? `${active.length}/${sawPaywall}` : "veri yok"),
+        ])}
+
+        {sect("Platform & Ülke")}
+        <div style={{ display: "flex", gap: 24, flexWrap: "wrap" }}>
+          <div style={{ flex: 1, minWidth: 220 }}>
+            <div style={{ fontSize: 12, color: "var(--fg-2)", marginBottom: 8 }}>Platform</div>
+            {platformRows.length === 0 ? (
+              <div style={{ fontSize: 12, color: "var(--fg-2)" }}>Henüz veri yok (yeni girişlerde dolacak).</div>
+            ) : platformRows.map(([k, v]) => (
+              <div key={k} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: "1px solid var(--line)", fontSize: 13 }}>
+                <span style={{ color: "var(--fg)" }}>{k}</span><span style={{ color: "var(--fg-2)" }}>{v}</span>
+              </div>
+            ))}
+          </div>
+          <div style={{ flex: 1, minWidth: 220 }}>
+            <div style={{ fontSize: 12, color: "var(--fg-2)", marginBottom: 8 }}>Ülke / Bölge</div>
+            {countryRows.length === 0 ? (
+              <div style={{ fontSize: 12, color: "var(--fg-2)" }}>Henüz veri yok.</div>
+            ) : countryRows.slice(0, 8).map(([k, v]) => (
+              <div key={k} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: "1px solid var(--line)", fontSize: 13 }}>
+                <span style={{ color: "var(--fg)" }}>{k}</span><span style={{ color: "var(--fg-2)" }}>{v}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {sect("En Çok Oynanan Oyunlar")}
+        {gameTotals.length === 0 ? (
+          <div style={{ fontSize: 12, color: "var(--fg-2)" }}>Henüz oyun verisi yok.</div>
+        ) : (
+          <div>
+            {gameTotals.map(([k, v]) => (
+              <div key={k} style={{ display: "flex", justifyContent: "space-between", padding: "7px 0", borderBottom: "1px solid var(--line)", fontSize: 13 }}>
+                <span style={{ color: "var(--fg)" }}>{gameLabel(k)}</span><span style={{ color: "var(--fg-2)" }}>{v} oynanma</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+// ───── Yapılandırma (Remote Config → config/app) sayfası ─────
+const CONFIG_DEFAULTS = {
+  premium_sounds: ["Kolik", "Pış Pış 2", "Yıldız Tozu", "Konuşma", "Tren", "Çamaşır Makinesi"],
+  free_favorite_limit: 3,
+  free_mixer_limit: 2,
+  free_timer_minutes: 45,
+  announcement_enabled: false,
+  announcement_text: "",
+};
+
+const ConfigPage = () => {
+  const toast = useToast();
+  const [cfg, setCfg] = useState(CONFIG_DEFAULTS);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (!window._fbDb || !window._fb) { setLoading(false); return; }
+      try {
+        const { collection, getDocs } = window._fb;
+        const snap = await getDocs(collection(window._fbDb, "config"));
+        let found = null;
+        snap.forEach(d => { if (d.id === "app") found = d.data(); });
+        if (!cancelled && found) {
+          setCfg(c => ({
+            ...c, ...found,
+            premium_sounds: Array.isArray(found.premium_sounds) ? found.premium_sounds : c.premium_sounds,
+          }));
+        }
+      } catch (e) { console.error("Config okunamadı:", e); }
+      finally { if (!cancelled) setLoading(false); }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  const isPrem = (n) => (cfg.premium_sounds || []).includes(n);
+  const toggleSound = (n) => setCfg(c => {
+    const set = new Set(c.premium_sounds || []);
+    if (set.has(n)) set.delete(n); else set.add(n);
+    return { ...c, premium_sounds: Array.from(set) };
+  });
+
+  const save = async () => {
+    if (!window._fb || !window._fb.setDoc) { toast.push("Firebase hazır değil", "error"); return; }
+    setSaving(true);
+    try {
+      const { doc, setDoc } = window._fb;
+      await setDoc(doc(window._fbDb, "config", "app"), {
+        premium_sounds: cfg.premium_sounds || [],
+        free_favorite_limit: Number(cfg.free_favorite_limit) || 0,
+        free_mixer_limit: Number(cfg.free_mixer_limit) || 0,
+        free_timer_minutes: Number(cfg.free_timer_minutes) || 0,
+        announcement_enabled: !!cfg.announcement_enabled,
+        announcement_text: cfg.announcement_text || "",
+      }, { merge: true });
+      toast.push("Yapılandırma kaydedildi ✓", "success");
+    } catch (e) { toast.push("Hata: " + e.message, "error"); }
+    finally { setSaving(false); }
+  };
+
+  const label = (t) => <div style={{ fontSize: 12, fontWeight: 700, color: "var(--fg-2)", margin: "20px 0 10px", textTransform: "uppercase", letterSpacing: "0.06em" }}>{t}</div>;
+  const numField = (key, lbl) => (
+    <div style={{ flex: 1, minWidth: 150 }}>
+      <div style={{ fontSize: 12, color: "var(--fg-2)", marginBottom: 6 }}>{lbl}</div>
+      <input type="number" min="0" value={cfg[key]} onChange={e => setCfg(c => ({ ...c, [key]: e.target.value }))}
+        style={{ width: "100%", padding: "10px 12px", borderRadius: 10, border: "1px solid var(--line)", background: "transparent", color: "var(--fg)", fontSize: 14 }} />
+    </div>
+  );
+
+  return (
+    <div className="panel">
+      <div className="panel-h">
+        <div className="panel-h-left">
+          <h3 className="panel-title">Uygulama Yapılandırması</h3>
+          <span className="panel-sub">Yeniden yayın yapmadan değiştir</span>
+        </div>
+        <div className="panel-h-right">
+          <button onClick={save} disabled={saving || loading}
+            style={{ padding: "9px 18px", borderRadius: 8, border: "none", background: "var(--accent)", color: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer", opacity: (saving || loading) ? 0.6 : 1 }}>
+            {saving ? "Kaydediliyor…" : "Kaydet"}
+          </button>
+        </div>
+      </div>
+      <div className="panel-body">
+        {loading ? (
+          <div className="empty"><div className="empty-sub">Yükleniyor…</div></div>
+        ) : (
+          <div>
+            {label("Premium Sesler (kilitli)")}
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {SOUND_CATALOG.map(n => (
+                <button key={n} onClick={() => toggleSound(n)}
+                  style={{
+                    padding: "7px 12px", borderRadius: 18, fontSize: 12.5, cursor: "pointer",
+                    border: isPrem(n) ? "1px solid var(--accent)" : "1px solid var(--line)",
+                    background: isPrem(n) ? "oklch(0.55 0.16 290 / 0.18)" : "transparent",
+                    color: isPrem(n) ? "var(--fg)" : "var(--fg-2)", fontWeight: isPrem(n) ? 700 : 400,
+                  }}>
+                  {isPrem(n) ? "★ " : ""}{n}
+                </button>
+              ))}
+            </div>
+
+            {label("Ücretsiz Plan Limitleri")}
+            <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+              {numField("free_favorite_limit", "Favori limiti")}
+              {numField("free_mixer_limit", "Karıştırıcı ses limiti")}
+              {numField("free_timer_minutes", "Zamanlayıcı üst sınırı (dk)")}
+            </div>
+
+            {label("Duyuru / Banner")}
+            <label style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer", marginBottom: 12 }}>
+              <input type="checkbox" checked={!!cfg.announcement_enabled} onChange={e => setCfg(c => ({ ...c, announcement_enabled: e.target.checked }))} />
+              <span style={{ fontSize: 13, color: "var(--fg)" }}>Duyuruyu uygulamada göster</span>
+            </label>
+            <textarea value={cfg.announcement_text} onChange={e => setCfg(c => ({ ...c, announcement_text: e.target.value }))}
+              placeholder="Kullanıcılara gösterilecek duyuru metni…" rows={3}
+              style={{ width: "100%", padding: "12px", borderRadius: 10, border: "1px solid var(--line)", background: "transparent", color: "var(--fg)", fontSize: 14, resize: "vertical", fontFamily: "inherit" }} />
+            <div style={{ fontSize: 11.5, color: "var(--fg-2)", marginTop: 10 }}>
+              Değişiklikler kullanıcının uygulamayı bir sonraki açışında geçerli olur. Duyuru her kullanıcıya bir kez gösterilir.
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
 
 // ───── Settings page ─────
 const SettingsPage = () => {
@@ -1640,11 +2454,13 @@ const Shell = () => {
   const renderPage = () => {
     switch (page) {
       case "dash":        return <DashboardPage onNav={navigate} />;
+      case "analytics":   return <AnalyticsPage />;
       case "users":       return <UsersPage />;
       case "premium":     return <PremiumPage />;
       case "feedback":    return <FeedbackPage />;
       case "leaderboard": return <LeaderboardPage />;
       case "sleep":       return <SleepPage />;
+      case "config":      return <ConfigPage />;
       case "settings":    return <SettingsPage />;
       default:            return <DashboardPage onNav={navigate} />;
     }

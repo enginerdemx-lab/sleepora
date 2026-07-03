@@ -1,7 +1,10 @@
 import 'dart:math';
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import '../main.dart' show appCriticalReady;
 import '../theme/app_theme.dart';
 import 'home_screen.dart';
+import 'onboarding_screen.dart';
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -52,19 +55,34 @@ class _SplashScreenState extends State<SplashScreen>
 
     _logoController.forward();
 
-    // 2 saniye sonra geçiş
-    Future.delayed(const Duration(seconds: 2), () {
-      if (mounted) {
-        Navigator.of(context).pushReplacement(
-          PageRouteBuilder(
-            pageBuilder: (_, __, ___) => const HomeScreen(),
-            transitionsBuilder: (_, anim, __, child) =>
-                FadeTransition(opacity: anim, child: child),
-            transitionDuration: const Duration(milliseconds: 600),
-          ),
-        );
-      }
-    });
+    _navigateWhenReady();
+  }
+
+  /// Ana ekrana geçiş — kör 2 sn beklemek yerine, kritik servisler (Firebase +
+  /// Auth + Lokalizasyon) hazır olduğunda geçer. Böylece:
+  ///  • Logo animasyonu için en az ~1.6 sn splash gösterilir.
+  ///  • Servisler erken hazırsa gereksiz bekleme olmaz.
+  ///  • Servisler yavaşsa en fazla 6 sn beklenir, sonra yine de geçilir
+  ///    (ana ekran kendi yükleme durumlarını gösterir).
+  Future<void> _navigateWhenReady() async {
+    await Future.delayed(const Duration(milliseconds: 1600));
+    if (!appCriticalReady.isCompleted) {
+      await appCriticalReady.future
+          .timeout(const Duration(seconds: 6), onTimeout: () {});
+    }
+    if (!mounted) return;
+    final prefs = await SharedPreferences.getInstance();
+    final done = prefs.getBool(OnboardingScreen.doneKey) ?? false;
+    if (!mounted) return;
+    Navigator.of(context).pushReplacement(
+      PageRouteBuilder(
+        pageBuilder: (_, __, ___) =>
+            done ? const HomeScreen() : const OnboardingScreen(),
+        transitionsBuilder: (_, anim, __, child) =>
+            FadeTransition(opacity: anim, child: child),
+        transitionDuration: const Duration(milliseconds: 600),
+      ),
+    );
   }
 
   @override

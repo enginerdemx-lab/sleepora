@@ -10,11 +10,71 @@ import '../theme/app_theme.dart';
 import '../widgets/sound_card.dart';
 import '../services/subscription_service.dart';
 import '../services/auth_service.dart';
+import '../services/firestore_service.dart';
 import 'paywall_screen.dart';
 import 'login_screen.dart';
 import '../services/localization_service.dart';
 import '../widgets/plus_dialog.dart';
-import '../widgets/unlock_button.dart';
+
+// ─── Favori kalıcılığı (yerel + Firestore) ───
+// Favoriler eskiden sadece bellekteydi → restart'ta siliniyordu. Bu yardımcılar
+// favorileri SharedPreferences'e (ve giriş varsa Firestore'a) yazar/okur.
+
+Future<Set<String>> _localFavNames() async {
+  try {
+    final prefs = await SharedPreferences.getInstance();
+    return (prefs.getStringList('favorite_sounds') ?? <String>[]).toSet();
+  } catch (_) {
+    return <String>{};
+  }
+}
+
+Future<void> _saveFavoritesLocal() async {
+  try {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList(
+      'favorite_sounds',
+      allSounds.where((s) => s.isFavorite).map((s) => s.name).toList(),
+    );
+  } catch (_) {}
+}
+
+/// Tek bir favori değişimini kalıcılaştırır (yerel önbellek + Firestore).
+Future<void> persistFavorite(String name, bool isFavorite) async {
+  await _saveFavoritesLocal();
+  final uid = AuthService().currentUser?.uid;
+  if (uid == null) return;
+  try {
+    if (isFavorite) {
+      await FirestoreService().addFavorite(uid, name);
+    } else {
+      await FirestoreService().removeFavorite(uid, name);
+    }
+  } catch (_) {}
+}
+
+/// Açılışta favorileri geri yükler. Giriş varsa Firestore kaynak kabul edilir,
+/// yoksa (veya hata olursa) yerel önbellek kullanılır.
+Future<void> loadFavoritesIntoAllSounds() async {
+  Set<String> names;
+  final uid = AuthService().currentUser?.uid;
+  if (uid != null) {
+    try {
+      final fav = await FirestoreService().getFavorites(uid);
+      names = fav
+          .map((m) => (m['name'] ?? '').toString())
+          .where((s) => s.isNotEmpty)
+          .toSet();
+    } catch (_) {
+      names = await _localFavNames();
+    }
+  } else {
+    names = await _localFavNames();
+  }
+  for (final s in allSounds) {
+    s.isFavorite = names.contains(s.name);
+  }
+}
 
 class Sound {
   final String name; // Dahili anahtar — değişmez (premium, favori, playCount için)
@@ -29,6 +89,12 @@ class Sound {
   bool isPlaying;
   double volume;
   final bool isRecord;
+  // Döngü stratejisi.
+  //  • true  → crossfade ile döngü (yumuşak/sürekli ambiyans sesleri).
+  //  • false → crossfade KAPALI, native gapless loop (LoopMode.one).
+  // İnsan sesi / ninni / ritmik seslerde crossfade iki kopyayı üst üste
+  // bindirip cırlama/çift-ses yarattığı için bunlarda false kullanılır.
+  final bool crossfadeLoop;
 
   Sound({
     required this.name,
@@ -40,6 +106,7 @@ class Sound {
     this.isPlaying = false,
     this.volume = 0.5,
     this.isRecord = false,
+    this.crossfadeLoop = true,
   });
 
   /// Dil ayarına göre çevrilmiş ses adı (Sound_ prefix'i kullanıcıya gösterilmez)
@@ -51,21 +118,21 @@ class Sound {
 }
 
 final List<Sound> allSounds = [
-  Sound(name: 'Pış Pış', icon: Icons.nightlight_round, iconPath: 'assets/images/icon/pispis.png', assetPath: 'assets/sounds/Pis Pis Sesi.mp3', artworkPath: 'assets/images/artwork/pis_pis.jpg'),
-  Sound(name: 'Eee Eee', icon: Icons.child_care, iconPath: 'assets/images/icon/eee.png', assetPath: 'assets/sounds/Eee Eee.mp3', artworkPath: 'assets/images/artwork/Eee_eee.jpg'),
-  Sound(name: 'Dandini', icon: Icons.nightlight_round, iconPath: 'assets/images/icon/dandini.png', assetPath: 'assets/sounds/Dandini-Dandini-Dastana.mp3', artworkPath: 'assets/images/artwork/Dandini.jpg'),
+  Sound(name: 'Pış Pış', icon: Icons.nightlight_round, iconPath: 'assets/images/icon/pispis.png', assetPath: 'assets/sounds/Pis Pis Sesi.mp3', artworkPath: 'assets/images/artwork/pis_pis.jpg', crossfadeLoop: false),
+  Sound(name: 'Eee Eee', icon: Icons.child_care, iconPath: 'assets/images/icon/eee.png', assetPath: 'assets/sounds/Eee Eee.mp3', artworkPath: 'assets/images/artwork/Eee_eee.jpg', crossfadeLoop: false),
+  Sound(name: 'Dandini', icon: Icons.nightlight_round, iconPath: 'assets/images/icon/dandini.png', assetPath: 'assets/sounds/Dandini-Dandini-Dastana.mp3', artworkPath: 'assets/images/artwork/Dandini.jpg', crossfadeLoop: false),
   Sound(name: 'Süpürge', icon: Icons.bolt, iconPath: 'assets/images/icon/supurge.png', assetPath: 'assets/sounds/süpürge-sesi.mp3', artworkPath: 'assets/images/artwork/supurge.jpg'),
-  Sound(name: 'Kolik', icon: Icons.child_care, iconPath: 'assets/images/icon/kolik.png', assetPath: 'assets/sounds/Kolik.mp3', artworkPath: 'assets/images/artwork/Kolik.jpg'),           // premium
+  Sound(name: 'Kolik', icon: Icons.child_care, iconPath: 'assets/images/icon/kolik.png', assetPath: 'assets/sounds/Kolik.mp3', artworkPath: 'assets/images/artwork/Kolik.jpg', crossfadeLoop: false),           // premium
   Sound(name: 'Kabin Sesi', icon: Icons.airplanemode_active, iconPath: 'assets/images/icon/kabin.png', assetPath: 'assets/sounds/kabin-sesi.mp3', artworkPath: 'assets/images/artwork/kabin.jpg'),
-  Sound(name: 'Uyusunda Büyüsün', icon: Icons.auto_awesome, iconPath: 'assets/images/icon/uyusundabuyusun.png', assetPath: 'assets/sounds/uyusunda-büyüsün-nini.mp3', artworkPath: 'assets/images/artwork/Uyusunda_Buyusun.jpg'),
-  Sound(name: 'Yıldız Tozu', icon: Icons.star, iconPath: 'assets/images/icon/yildiztozu.png', assetPath: 'assets/sounds/Yildiz-Tozu-Ninnisi.mp3', artworkPath: 'assets/images/artwork/Yildiz_Tozu.jpg'), // premium
-  Sound(name: 'Pış Pış + Süpürge', icon: Icons.bolt, iconPath: 'assets/images/icon/supurge_pispis.png', assetPath: 'assets/sounds/Pis-pis-ve-süpürge.mp3', artworkPath: 'assets/images/artwork/Pis_pis_supurge.jpg'),
+  Sound(name: 'Uyusunda Büyüsün', icon: Icons.auto_awesome, iconPath: 'assets/images/icon/uyusundabuyusun.png', assetPath: 'assets/sounds/uyusunda-büyüsün-nini.mp3', artworkPath: 'assets/images/artwork/Uyusunda_Buyusun.jpg', crossfadeLoop: false),
+  Sound(name: 'Yıldız Tozu', icon: Icons.star, iconPath: 'assets/images/icon/yildiztozu.png', assetPath: 'assets/sounds/Yildiz-Tozu-Ninnisi.mp3', artworkPath: 'assets/images/artwork/Yildiz_Tozu.jpg', crossfadeLoop: false), // premium
+  Sound(name: 'Pış Pış + Süpürge', icon: Icons.bolt, iconPath: 'assets/images/icon/supurge_pispis.png', assetPath: 'assets/sounds/Pis-pis-ve-süpürge.mp3', artworkPath: 'assets/images/artwork/Pis_pis_supurge.jpg', crossfadeLoop: false),
   Sound(name: 'Beyaz Gürültü', icon: Icons.layers, iconPath: 'assets/images/icon/beyaz_gurultu.png', assetPath: 'assets/sounds/beyaz-gürültü.mp3', artworkPath: 'assets/images/artwork/Beyaz_Gurultu.jpg'),
-  Sound(name: 'Konuşma', icon: Icons.record_voice_over, iconPath: 'assets/images/icon/konusma.png', assetPath: 'assets/sounds/Konusma.mp3', artworkPath: 'assets/images/artwork/Konusma.jpg'), // premium
+  Sound(name: 'Konuşma', icon: Icons.record_voice_over, iconPath: 'assets/images/icon/konusma.png', assetPath: 'assets/sounds/Konusma.mp3', artworkPath: 'assets/images/artwork/Konusma.jpg', crossfadeLoop: false), // premium
   Sound(name: 'Yol Sesi', icon: Icons.directions_car, iconPath: 'assets/images/icon/yol.png', assetPath: 'assets/sounds/yol-sesi.mp3', artworkPath: 'assets/images/artwork/Yol.jpg'),
   Sound(name: 'Yağmur', icon: Icons.umbrella, iconPath: 'assets/images/icon/yagmur.png', assetPath: 'assets/sounds/yagmur.mp3', artworkPath: 'assets/images/artwork/Yagmur.jpg'),
   Sound(name: 'Saç Kurutma', icon: Icons.air, iconPath: 'assets/images/icon/sackurutma.png', assetPath: 'assets/sounds/sac-kurutma.mp3', artworkPath: 'assets/images/artwork/Sac_Kurutma.jpg'),
-  Sound(name: 'Pış Pış 2', icon: Icons.nightlight_round, iconPath: 'assets/images/icon/pispis.png', assetPath: 'assets/sounds/Piş_piş2.mp3', artworkPath: 'assets/images/artwork/Pis_pis_2.jpg'), // premium
+  Sound(name: 'Pış Pış 2', icon: Icons.nightlight_round, iconPath: 'assets/images/icon/pispis.png', assetPath: 'assets/sounds/Piş_piş2.mp3', artworkPath: 'assets/images/artwork/Pis_pis_2.jpg', crossfadeLoop: false), // premium
   Sound(name: 'Rüzgar', icon: Icons.air, iconPath: 'assets/images/icon/ruzgar.png', assetPath: 'assets/sounds/Rüzgar.mp3', artworkPath: 'assets/images/artwork/ruzgar.jpg'),
   Sound(name: 'Dalga', icon: Icons.water, iconPath: 'assets/images/icon/dalga.png', assetPath: 'assets/sounds/Dalga.mp3', artworkPath: 'assets/images/artwork/Dalga.jpg'),
   Sound(name: 'Duş', icon: Icons.shower, iconPath: 'assets/images/icon/dus.png', assetPath: 'assets/sounds/Dus.mp3', artworkPath: 'assets/images/artwork/Dus.jpg'),
@@ -190,6 +257,7 @@ class _SoundsScreenState extends State<SoundsScreen> with SingleTickerProviderSt
     // Favoriden çıkarma her zaman serbest
     if (sound.isFavorite) {
       setState(() => sound.isFavorite = false);
+      persistFavorite(sound.name, false);
       return;
     }
 
@@ -207,6 +275,7 @@ class _SoundsScreenState extends State<SoundsScreen> with SingleTickerProviderSt
     }
 
     setState(() => sound.isFavorite = true);
+    persistFavorite(sound.name, true);
   }
 
   // ─── Login gerekli dialog (Favoriler) ───
@@ -441,8 +510,6 @@ class _SoundsScreenState extends State<SoundsScreen> with SingleTickerProviderSt
                     )
                   else ...[
                     _HeaderButton(label: '', icon: Icons.tune, isPrimary: true, onTap: widget.onGoToMixer),
-                    const SizedBox(width: 8),
-                    _HeaderButton(label: '', icon: Icons.shuffle_rounded, isPrimary: false, onTap: widget.onShuffle),
                     const SizedBox(width: 8),
                     _HeaderButton(label: '', icon: Icons.nightlight_round, isPrimary: false, onTap: widget.onSleepGuide),
                   ],

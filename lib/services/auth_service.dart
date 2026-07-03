@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:io' show Platform;
+import 'dart:ui' show PlatformDispatcher;
 import 'package:flutter/foundation.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_sign_in/google_sign_in.dart';
@@ -6,6 +8,9 @@ import 'package:sign_in_with_apple/sign_in_with_apple.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'firestore_service.dart';
 import 'subscription_service.dart';
+
+/// Uygulama sürümü (pubspec ile eşle — sürüm yükseltince güncelle).
+const String kAppVersion = '1.0.0+14';
 
 /// Sleepora Authentication Servisi
 ///
@@ -217,13 +222,48 @@ class AuthService extends ChangeNotifier {
   // Profil Güncelleme
   // ═══════════════════════════════════════════════════════
 
+  /// Kullanıcı adı değiştirme bekleme süresi (gün).
+  /// Bir değişiklikten sonra bu süre dolmadan tekrar değiştirilemez.
+  static const int nameChangeCooldownDays = 3;
+
+  /// Son ad değişikliği zaman damgası, kullanıcıya özel saklanır
+  /// (uid yoksa misafir oturumu için ortak anahtar).
+  String get _nameChangeKey => 'name_changed_at_${_user?.uid ?? 'guest'}';
+
+  /// Adın tekrar değiştirilebilmesi için kalan süre.
+  /// `null` dönerse şu an değiştirilebilir demektir.
+  Future<Duration?> nameChangeRemaining() async {
+    final prefs = await SharedPreferences.getInstance();
+    final str = prefs.getString(_nameChangeKey);
+    if (str == null) return null;
+    final last = DateTime.tryParse(str);
+    if (last == null) return null;
+    final availableAt = last.add(const Duration(days: nameChangeCooldownDays));
+    final now = DateTime.now();
+    return availableAt.isAfter(now) ? availableAt.difference(now) : null;
+  }
+
   /// Firebase Auth profilindeki görünen adı günceller.
+  ///
+  /// Bekleme süresi ([nameChangeCooldownDays] gün) dolmadıysa değişiklik
+  /// yapılmaz ve `false` döner. Çağıran taraf, süreyi önceden
+  /// [nameChangeRemaining] ile kontrol edip kullanıcıyı uyarmalıdır.
   Future<bool> updateDisplayName(String newName) async {
     if (_user == null || newName.trim().isEmpty) return false;
+
+    // Bekleme süresi kontrolü — güvenlik için burada da doğrula.
+    if (await nameChangeRemaining() != null) {
+      debugPrint('⏳ Ad değişikliği bekleme süresi dolmadı.');
+      return false;
+    }
+
     try {
       await _user!.updateDisplayName(newName.trim());
       await _user!.reload();
       _user = _auth.currentUser;
+      // Değişiklik zamanını kaydet — bir sonraki değişiklik için kronometre.
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_nameChangeKey, DateTime.now().toIso8601String());
       notifyListeners();
       debugPrint('✏️ Görünen ad güncellendi: ${_user?.displayName}');
       return true;
@@ -450,6 +490,28 @@ class AuthService extends ChangeNotifier {
 
       // ─── 6. Son giriş zamanını güncelle ───
       await fs.updateLastLogin(uid);
+
+      // ─── 6b. Cihaz / sürüm bilgisi (analitik) ───
+      try {
+        String platform = 'unknown';
+        String osVer = '';
+        try {
+          platform = Platform.isIOS
+              ? 'ios'
+              : (Platform.isAndroid ? 'android' : Platform.operatingSystem);
+          osVer = Platform.operatingSystemVersion;
+        } catch (_) {}
+        final locale = PlatformDispatcher.instance.locale;
+        await fs.updateUserFields(uid, {
+          'platform': platform,
+          'os_version': osVer,
+          'app_version': kAppVersion,
+          'locale': locale.languageCode,
+          'country': locale.countryCode ?? '',
+        });
+      } catch (e) {
+        debugPrint('❌ Cihaz bilgisi yazılamadı: $e');
+      }
 
       // ─── 7. Migrasyonun tamamlandığını işaretle ───
       await prefs.setBool('data_migrated', true);

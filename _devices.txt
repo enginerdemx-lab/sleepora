@@ -1,0 +1,66 @@
+==DEVICES_MACHINE==
+[
+  {
+    "name": "engin.erdem iPhone’u",
+    "id": "00008140-000E30E91A38801C",
+    "isSupported": true,
+    "targetPlatform": "ios",
+    "emulator": false,
+    "sdk": "iOS 26.5 23F77",
+    "capabilities": {
+      "hotReload": true,
+      "hotRestart": true,
+      "screenshot": false,
+      "flutterExit": true,
+      "hardwareRendering": false,
+      "startPaused": false
+    }
+  },
+  {
+    "name": "macOS",
+    "id": "macos",
+    "isSupported": true,
+    "targetPlatform": "darwin",
+    "emulator": false,
+    "sdk": "macOS 26.5 25F71 darwin-arm64",
+    "capabilities": {
+      "hotReload": true,
+      "hotRestart": true,
+      "screenshot": false,
+      "flutterExit": true,
+      "hardwareRendering": false,
+      "startPaused": true
+    }
+  },
+  {
+    "name": "Chrome",
+    "id": "chrome",
+    "isSupported": true,
+    "targetPlatform": "web-javascript",
+    "emulator": false,
+    "sdk": "Google Chrome 148.0.7778.215",
+    "capabilities": {
+      "hotReload": true,
+      "hotRestart": true,
+      "screenshot": false,
+      "flutterExit": false,
+      "hardwareRendering": false,
+      "startPaused": true
+    }
+  }
+]
+
+==DEVICES_HUMAN==
+Found 2 connected devices:
+  macOS (desktop) • macos  • darwin-arm64   • macOS 26.5 25F71 darwin-arm64
+  Chrome (web)    • chrome • web-javascript • Google Chrome 148.0.7778.215
+
+Checking for wireless devices...
+
+Found 1 wirelessly connected device:
+  engin.erdem iPhone’u (wireless) (mobile) • 00008140-000E30E91A38801C • ios • iOS 26.5 23F77
+
+Run "flutter emulators" to list and start any available device emulators.
+
+If you expected another device to be detected, please run "flutter doctor" to diagnose potential issues. You may also try increasing the time to wait for connected devices with the "--device-timeout" flag. Visit https://flutter.dev/setup/ for troubleshooting tips.
+==DONE==

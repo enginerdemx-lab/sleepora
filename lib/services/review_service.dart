@@ -1,65 +1,122 @@
+import 'dart:io' show Platform;
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'localization_service.dart';
 
 class ReviewService {
-  static const String _firstLaunchKey = 'first_launch_date';
-  static const String _lastDismissedKey = 'review_last_dismissed';
   static const String _hasRatedKey = 'has_rated';
-  static const int _daysBeforeFirstPrompt = 3;
-  static const int _daysAfterDismiss = 10;
+  // İlk yorum isteğinin gösterildiği an — ücretli kullanıcının 24 saatlik
+  // ikinci isteği bu zamana göre hesaplanır.
+  static const String _firstPromptAtKey = 'review_first_prompt_at';
+  // Ücretli kullanıcıya 24 saat sonraki ikinci istek gösterildi mi?
+  static const String _paidSecondDoneKey = 'review_paid_second_done';
 
-  /// Yorum pop-up'ı gösterilmeli mi kontrol et
-  static Future<bool> shouldShowReviewPrompt() async {
-    final prefs = await SharedPreferences.getInstance();
+  // App Store yorum sayfası (id6745027461 → doğrudan "yorum yaz" ekranı).
+  static const String _appStoreReviewUrl =
+      'https://apps.apple.com/app/id6745027461?action=write-review';
 
-    // Zaten puanladıysa gösterme
-    if (prefs.getBool(_hasRatedKey) ?? false) return false;
+  // Google Play uygulama kimliği (Android'de değerlendirme buraya yönlenir).
+  static const String _androidPackage = 'com.bebekuyku.app';
 
-    final now = DateTime.now();
+  /// Mağaza listeleme sayfasını doğrudan açar (Ayarlar'daki "Uygulamayı
+  /// Değerlendir" butonu). Platforma göre Play Store / App Store.
+  static Future<void> openStoreListing() => _openStoreReview();
 
-    // İlk açılış tarihini kaydet
-    final firstLaunchStr = prefs.getString(_firstLaunchKey);
-    if (firstLaunchStr == null) {
-      await prefs.setString(_firstLaunchKey, now.toIso8601String());
-      return false;
-    }
-
-    final firstLaunch = DateTime.parse(firstLaunchStr);
-
-    // İlk açılıştan beri yeterli gün geçti mi?
-    if (now.difference(firstLaunch).inDays < _daysBeforeFirstPrompt) return false;
-
-    // Son "hayır" dedikten beri yeterli gün geçti mi?
-    final lastDismissedStr = prefs.getString(_lastDismissedKey);
-    if (lastDismissedStr != null) {
-      final lastDismissed = DateTime.parse(lastDismissedStr);
-      if (now.difference(lastDismissed).inDays < _daysAfterDismiss) return false;
-    }
-
-    return true;
-  }
-
-  /// Kullanıcı "Şimdi Değil" dedi
-  static Future<void> dismissReview() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_lastDismissedKey, DateTime.now().toIso8601String());
-  }
-
-  /// Kullanıcı puanladı
+  /// Kullanıcı puanladı — bir daha hiç gösterme.
   static Future<void> markAsRated() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_hasRatedKey, true);
   }
 
-  /// Yorum pop-up'ını göster
-  static Future<void> showReviewDialog(BuildContext context) async {
-    if (!await shouldShowReviewPrompt()) return;
+  /// Kullanıcı "Şimdi Değil" dedi. Ek işlem gerekmez: ücretsiz kullanıcıya
+  /// tekrar gösterilmez, ücretli kullanıcıya 24 saat sonra bir kez daha sorulur.
+  static Future<void> dismissReview() async {}
 
+  /// Mağaza yorum sayfasını açar — platforma göre doğru mağazaya yönlendirir.
+  /// Android → Google Play, iOS → App Store.
+  static Future<void> _openStoreReview() async {
+    if (Platform.isAndroid) {
+      // Önce Play Store uygulamasını doğrudan aç (market://), yoksa tarayıcı.
+      final market = Uri.parse('market://details?id=$_androidPackage');
+      final web = Uri.parse(
+          'https://play.google.com/store/apps/details?id=$_androidPackage');
+      try {
+        if (await launchUrl(market, mode: LaunchMode.externalApplication)) {
+          return;
+        }
+      } catch (_) {}
+      try {
+        await launchUrl(web, mode: LaunchMode.externalApplication);
+      } catch (_) {}
+      return;
+    }
+
+    // iOS / diğer → App Store yorum sayfası.
+    final uri = Uri.parse(_appStoreReviewUrl);
+    try {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } catch (_) {}
+  }
+
+  /// Yorum pop-up'ını göster.
+  ///
+  /// Akış:
+  ///   • İlk açılış → herkese hemen göster.
+  ///   • Ücretli (premium) kullanıcı → ilk istekten 24 saat sonra bir kez daha.
+  ///   • Zaten puanladıysa hiç gösterme.
+  static Future<void> showReviewDialog(
+    BuildContext context, {
+    bool isPremium = false,
+  }) async {
+    final prefs = await SharedPreferences.getInstance();
+
+    // Zaten puanladıysa hiçbir şey yapma.
+    if (prefs.getBool(_hasRatedKey) ?? false) return;
+
+    final now = DateTime.now();
+    final firstPromptStr = prefs.getString(_firstPromptAtKey);
+
+    bool show = false;
+    if (firstPromptStr == null) {
+      // İlk açılış — herkese hemen göster ve zamanı kaydet.
+      await prefs.setString(_firstPromptAtKey, now.toIso8601String());
+      show = true;
+    } else if (isPremium) {
+      // Ücretli kullanıcı — ilk istekten 24 saat sonra bir kez daha.
+      final firstPrompt = DateTime.tryParse(firstPromptStr);
+      final secondDone = prefs.getBool(_paidSecondDoneKey) ?? false;
+      if (!secondDone &&
+          firstPrompt != null &&
+          now.difference(firstPrompt).inHours >= 24) {
+        await prefs.setBool(_paidSecondDoneKey, true);
+        show = true;
+      }
+    }
+
+    if (!show) return;
     if (!context.mounted) return;
 
-    showDialog(
+    await _present(context);
+  }
+
+  /// Puanlanmadıysa diyaloğu doğrudan gösterir — onboarding'de "AHA anından
+  /// sonra" ve "onboarding sonunda" çağrılır. İlk istek zamanını da işaretler
+  /// ki ana ekran ayrıca tekrar sormasın.
+  static Future<void> showOnboardingPrompt(BuildContext context) async {
+    final prefs = await SharedPreferences.getInstance();
+    if (prefs.getBool(_hasRatedKey) ?? false) return;
+    if (prefs.getString(_firstPromptAtKey) == null) {
+      await prefs.setString(
+          _firstPromptAtKey, DateTime.now().toIso8601String());
+    }
+    if (!context.mounted) return;
+    await _present(context);
+  }
+
+  static Future<void> _present(BuildContext context) {
+    return showDialog(
       context: context,
       barrierDismissible: false,
       barrierColor: Colors.black.withValues(alpha: 0.65),
@@ -191,9 +248,10 @@ class ReviewService {
                         const SizedBox(height: 26),
                         // Puanla butonu — gradient + glow
                         GestureDetector(
-                          onTap: () {
-                            markAsRated();
-                            Navigator.pop(ctx);
+                          onTap: () async {
+                            await markAsRated();
+                            if (ctx.mounted) Navigator.pop(ctx);
+                            await _openStoreReview();
                           },
                           child: Container(
                             width: double.infinity,

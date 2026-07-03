@@ -292,6 +292,7 @@ class _FavoriteSoundsTab extends StatelessWidget {
             onTap: () => onSoundTapped(sound), 
             onFavorite: () {
               sound.isFavorite = !sound.isFavorite;
+              persistFavorite(sound.name, sound.isFavorite);
               onFavoriteToggle();
             },
           );

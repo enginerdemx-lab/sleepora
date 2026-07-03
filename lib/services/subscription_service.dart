@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'auth_service.dart';
 import 'firestore_service.dart';
 import 'localization_service.dart';
+import 'remote_config_service.dart';
 
 /// Abonelik ürün ID'leri — App Store Connect'te oluşturulacak
 class SubscriptionIds {
@@ -14,16 +15,23 @@ class SubscriptionIds {
   static const Set<String> all = {monthly, yearly, lifetime};
 }
 
-/// Premium olarak kilitli ses adları
+/// Premium olarak kilitli ses adları + ücretsiz plan limitleri.
+///
+/// Bazı alanlar artık Admin panelden (RemoteConfigService → `config/app`)
+/// yönetilebilir; uzaktan değer yoksa aşağıdaki varsayılanlara döner.
 class PremiumContent {
-  static const List<String> sounds = ['Kolik', 'Pış Pış 2', 'Yıldız Tozu', 'Konuşma', 'Tren', 'Çamaşır Makinesi'];
+  /// Premium kilitli sesler — Admin panelden değiştirilebilir.
+  static List<String> get sounds => RemoteConfigService().premiumSounds;
   static const List<String> games = []; // Oyunlar ücretsiz — içlerinde premium özellikler var
   static const List<String> premiumQuizCategories = ['Tarih', 'Coğrafya', 'Bilim & Teknoloji'];
   static const int freeMinesweeperHints = 0; // Ücretsiz planda ipucu yok
-  static const int freeTimerMaxMinutes = 45;
+  /// Ücretsiz zamanlayıcı üst sınırı (dk) — Admin panelden değiştirilebilir.
+  static int get freeTimerMaxMinutes => RemoteConfigService().freeTimerMinutes;
   static const int freeRecordingMaxCount = 1;
-  static const int freeFavoriteMaxCount = 3;
-  static const int freeMixerMaxSounds = 2; // Ücretsiz planda karıştırıcıda max 2 ses
+  /// Ücretsiz favori limiti — Admin panelden değiştirilebilir.
+  static int get freeFavoriteMaxCount => RemoteConfigService().freeFavoriteLimit;
+  /// Ücretsiz karıştırıcı ses limiti — Admin panelden değiştirilebilir.
+  static int get freeMixerMaxSounds => RemoteConfigService().freeMixerLimit;
   static const int previewDurationSeconds = 5; // Premium ses önizleme süresi
 }
 
@@ -49,8 +57,25 @@ class SubscriptionService extends ChangeNotifier {
   // monthly/yearly için settings ekranı bundan "X gün kaldı" hesaplar.
   DateTime? _subscriptionEndDate;
 
+  // Plus süresi dolduğunda bir kez gösterilecek "süre doldu" pop-up bayrağı.
+  bool _pendingExpiryNotice = false;
+
   bool get isAvailable => _isAvailable;
-  bool get isPremium => _isPremium;
+
+  /// Premium aktif mi?
+  ///
+  /// Süreli planlarda (admin panelden verilen deneme/abonelik dâhil) bitiş
+  /// tarihi geçmişse `false` döner — böylece süresi dolan üyelik otomatik
+  /// kapanır. Lifetime veya bitiş tarihi olmayan (süresiz) premium her zaman
+  /// aktiftir.
+  bool get isPremium {
+    if (!_isPremium) return false;
+    if (isLifetime) return true;
+    final end = _subscriptionEndDate;
+    if (end != null && !end.isAfter(DateTime.now())) return false; // süresi doldu
+    return true;
+  }
+
   bool get isLoading => _isLoading;
   List<ProductDetails> get products => _products;
   String? get error => _error;
@@ -75,6 +100,34 @@ class SubscriptionService extends ChangeNotifier {
     if (diff <= 0) return 0;
     // En az 1 gün gösterimi için yukarı yuvarla
     return (diff / 86400).ceil();
+  }
+
+  /// Plus süresi yeni doldu mu? (bir kerelik pop-up için.)
+  /// UI bunu okuyup dialog gösterdikten sonra [clearExpiryNotice] çağırmalı.
+  bool get hasPendingExpiryNotice => _pendingExpiryNotice;
+
+  /// "Süre doldu" pop-up'ı gösterildikten sonra bayrağı temizler.
+  void clearExpiryNotice() => _pendingExpiryNotice = false;
+
+  /// Süreli premium'un bitişini değerlendirir.
+  ///
+  /// Bitiş tarihi geçmiş bir premium varsa ve bu bitiş için daha önce bildirim
+  /// gösterilmediyse, bir kerelik [hasPendingExpiryNotice] bayrağını set eder.
+  /// `plus_expiry_notified_ms` ile aynı bitiş için tekrar tetiklenmesi önlenir
+  /// (uygulama yeniden açılsa bile pop-up bir kez gösterilir).
+  Future<void> _evaluateExpiryNotice(SharedPreferences prefs) async {
+    final end = _subscriptionEndDate;
+    // Süreli (lifetime olmayan, bitiş tarihi olan) bir premium yoksa çık.
+    if (!_isPremium || isLifetime || end == null) return;
+    // Bitiş henüz gelmediyse çık.
+    if (end.isAfter(DateTime.now())) return;
+
+    final endMs = end.millisecondsSinceEpoch;
+    if (prefs.getInt('plus_expiry_notified_ms') != endMs) {
+      _pendingExpiryNotice = true;
+      await prefs.setInt('plus_expiry_notified_ms', endMs);
+      notifyListeners();
+    }
   }
 
   /// Başlat — uygulama açılışında çağır
@@ -124,6 +177,9 @@ class SubscriptionService extends ChangeNotifier {
 
     // Firestore'dan manuel premium durumunu eşitle (Admin Panel senkronizasyonu)
     await syncPremiumFromFirestore();
+
+    // Süreli premium bitişini değerlendir (çevrimdışı/önbellek durumları dâhil).
+    await _evaluateExpiryNotice(prefs);
   }
 
   /// Firestore'daki güncel premium durumunu locale yansıtır.
@@ -190,6 +246,9 @@ class SubscriptionService extends ChangeNotifier {
         notifyListeners();
         debugPrint('🔄 SubscriptionService: Premium=$_isPremium plan=$_subscriptionPlan end=$_subscriptionEndDate');
       }
+
+      // Bitiş tarihi geçtiyse bir kerelik "süre doldu" bildirimini değerlendir.
+      await _evaluateExpiryNotice(prefs);
     } catch (e) {
       debugPrint('❌ SubscriptionService Firestore sync error: $e');
     }
@@ -337,6 +396,32 @@ class SubscriptionService extends ChangeNotifier {
       }
 
       notifyListeners();
+
+      // ─── Firestore senkronizasyonu (admin panel + çoklu cihaz) ───
+      // IAP satın alması şimdiye kadar yalnızca cihazda (SharedPreferences)
+      // tutuluyordu; bu yüzden Admin Panel'e yansımıyordu. Burada premium
+      // durumunu Firestore'a da yazıyoruz. Best-effort: hata olsa bile premium
+      // yukarıda zaten aktif edildiğinden kullanıcı etkilenmez.
+      //
+      // NOT: Üretim için ideal çözüm sunucu taraflı doğrulamadır (App Store
+      // Server Notifications → Cloud Function). Bu client-side yazım geçici bir
+      // köprüdür.
+      try {
+        final auth = AuthService();
+        if (auth.isLoggedIn && auth.uid != null) {
+          await FirestoreService().updateSubscription(
+            uid: auth.uid!,
+            isPremium: true,
+            plan: _subscriptionPlan,
+            startDate: DateTime.now(),
+            endDate: _subscriptionEndDate,
+            transactionId: purchase.purchaseID,
+            platform: 'ios',
+          );
+        }
+      } catch (e) {
+        debugPrint('❌ IAP → Firestore senkronizasyon hatası: $e');
+      }
     }
   }
 

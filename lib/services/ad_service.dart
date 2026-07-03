@@ -40,6 +40,15 @@ class AdService {
   static const bool _forceTestIds = false; // Release: gerçek reklam | Debug: kDebugMode otomatik test reklamı
   static bool get useTestIds => _forceTestIds || kDebugMode;
 
+  // ═══════════════════════════════════════════════════════
+  // ANDROID reklam kill-switch (geçici)
+  // ═══════════════════════════════════════════════════════
+  /// Android'de AdMob hesabı/uygulaması doğrulanana kadar HİÇBİR reklam
+  /// gösterilmez (test reklamı bile). Doğrulama bitip [_RealIds] içindeki
+  /// Android gerçek ID'leri doldurulunca bunu `true` yap → Android reklamları açılır.
+  /// iOS bundan ETKİLENMEZ; iOS reklamları normal çalışmaya devam eder.
+  static const bool _androidAdsReady = false;
+
   // Google'ın resmi test ID'leri (her zaman çalışır, gerçek para üretmez)
   static const _testBanner = 'ca-app-pub-3940256099942544/2934735716'; // iOS banner
   static const _testBannerAndroid = 'ca-app-pub-3940256099942544/6300978111';
@@ -51,6 +60,11 @@ class AdService {
   // ═══════════════════════════════════════════════════════
   Future<void> initialize() async {
     if (_initialized) return;
+    // Android: AdMob doğrulanana kadar Mobile Ads SDK'yı hiç başlatma → sıfır reklam.
+    if (Platform.isAndroid && !_androidAdsReady) {
+      debugPrint('📺 AdService: Android reklamlar kapalı (AdMob doğrulanıyor), init atlandı');
+      return;
+    }
     try {
       await MobileAds.instance.initialize();
       // Çocuk hedefli içerik için tag — sleepora bebek uygulaması ama
@@ -111,7 +125,11 @@ class AdService {
   // ═══════════════════════════════════════════════════════
   // Premium check helper
   // ═══════════════════════════════════════════════════════
-  bool get adsEnabled => !SubscriptionService().isPremium;
+  bool get adsEnabled {
+    // Android: AdMob doğrulanana kadar reklam yok (premium kontrolünden de önce).
+    if (Platform.isAndroid && !_androidAdsReady) return false;
+    return !SubscriptionService().isPremium;
+  }
 
   // ═══════════════════════════════════════════════════════
   // Rewarded ad loader + show wrapper
@@ -129,6 +147,8 @@ class AdService {
     VoidCallback? onAdShown,
     VoidCallback? onAdClosed,
   }) async {
+    // Android: AdMob doğrulanana kadar rewarded reklam yok → ödül vermeden geç.
+    if (Platform.isAndroid && !_androidAdsReady) return false;
     // ── Reklam başlamadan ses kontrolünü güvene al ──
     // AdMob iOS'ta kendi AVAudioSession'ını aktive eder; Sleepora'nın çalan
     // sesi (uyku ve doğa sesleri) bu sırada interrupt olur. Sistem geri

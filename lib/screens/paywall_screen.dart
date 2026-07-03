@@ -4,6 +4,8 @@ import 'package:url_launcher/url_launcher.dart';
 import '../theme/app_theme.dart';
 import '../services/subscription_service.dart';
 import '../services/localization_service.dart';
+import '../services/auth_service.dart';
+import '../services/firestore_service.dart';
 import 'package:video_player/video_player.dart';
 
 class PaywallScreen extends StatefulWidget {
@@ -24,16 +26,31 @@ class PaywallScreen extends StatefulWidget {
   }
 }
 
-class _PaywallScreenState extends State<PaywallScreen> with SingleTickerProviderStateMixin {
+class _PaywallScreenState extends State<PaywallScreen>
+    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   final SubscriptionService _sub = SubscriptionService();
   final _loc = LocalizationService();
   int _selectedPlan = 0; // 0=yıllık, 1=aylık, 2=ömür boyu
   bool _isProcessing = false;
+  // Satın alma akışı hiçbir sonuç dönmezse (ör. Paid Agreement aktif değil,
+  // sandbox takıldı) butonun sonsuza kadar dönmesini engelleyen güvenlik
+  // zamanlayıcısı. Apple Guideline 2.1(b): IAP her durumda zarif biçimde
+  // sonuçlanmalı, ekran asla süresiz "yükleniyor" kalmamalı.
+  Timer? _purchaseWatchdog;
+  // Yalnızca GERÇEK bir satın alma (buyNonConsumable) beklerken true. Ürün
+  // ön-yüklemesi (loadProducts) sırasındaki bildirimlerin spinner'ı yanlışlıkla
+  // sıfırlamasını önler — yalnız satın alma iptal/hata olunca reset yapılır.
+  bool _purchaseInFlight = false;
   late AnimationController _shimmerController;
 
   @override
   void initState() {
     super.initState();
+    // Ödeme sayfasından geri dönüşü (resume) yakalamak için lifecycle dinleyici.
+    WidgetsBinding.instance.addObserver(this);
+    // Paywall görüntülenme sayacı (dönüşüm hunisi analitiği).
+    final uid = AuthService().currentUser?.uid;
+    if (uid != null) FirestoreService().incrementPaywallView(uid);
     _shimmerController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 2500),
@@ -54,16 +71,107 @@ class _PaywallScreenState extends State<PaywallScreen> with SingleTickerProvider
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _cancelPurchaseWatchdog();
     _shimmerController.dispose();
     _sub.removeListener(_onSubChange);
     super.dispose();
   }
 
+  /// Ödeme sayfası (Google Play / App Store) ayrı bir aktivite/sheet olarak
+  /// açılır; kullanıcı ÖDEMEDEN VAZGEÇİP geri dönünce uygulama 'resumed' olur.
+  ///
+  /// Başarılı bir satın alma stream üzerinden premium'u getirir → [_onSubChange]
+  /// ekranı zaten kapatır. Kısa bir bekleme sonrası hâlâ premium gelmediyse
+  /// kullanıcı iptal etmiş demektir → butonu "yükleniyor" kilidinden kurtar.
+  ///
+  /// Android'de iptal (userCanceled) event'i bazen gecikebildiği/gelmediği için
+  /// bu, butonun sonsuza kadar dönmesini engelleyen kesin çözümdür — 60 sn'lik
+  /// watchdog'a düşmeden ~2 sn içinde toparlanır.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && _purchaseInFlight) {
+      Future.delayed(const Duration(seconds: 2), () {
+        if (!mounted) return;
+        if (_purchaseInFlight && !_sub.isPremium) {
+          _purchaseInFlight = false;
+          _cancelPurchaseWatchdog();
+          setState(() => _isProcessing = false);
+        }
+      });
+    }
+  }
+
   void _onSubChange() {
     if (!mounted) return;
-    // Sadece satın alma sonucu gelince state güncelle — loadProducts sırasında donmasın
+
+    // 1) Başarılı satın alma → premium aktif → ekranı kapat.
+    //    (Mevcut, çalışan akış: spinner döner → başarı → ekran kapanır.)
+    if (_sub.isPremium) {
+      _purchaseInFlight = false;
+      _cancelPurchaseWatchdog();
+      Navigator.pop(context, true);
+      return;
+    }
+
+    // 2) Satın alma sonuçlandı ama premium gelmedi (iptal / hata) → spinner'ı
+    //    durdur ve net bir mesaj göster. Apple Guideline 2.1(b): başarısız bir
+    //    IAP ekranda süresiz "yükleniyor" olarak ASLA kalmamalı.
+    //    Yalnızca gerçek bir satın alma beklerken (_purchaseInFlight) tetiklenir;
+    //    ürün ön-yüklemesi sırasında yanlışlıkla sıfırlamaz.
+    if (_purchaseInFlight && !_sub.isLoading) {
+      _purchaseInFlight = false;
+      _cancelPurchaseWatchdog();
+      setState(() => _isProcessing = false);
+      if (_sub.error != null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(_loc.t('PurchaseError')),
+            backgroundColor: AppColors.card,
+            behavior: SnackBarBehavior.floating,
+            duration: const Duration(seconds: 4),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          ),
+        );
+      }
+      return;
+    }
+
+    // 3) Diğer bildirimler (ör. ürünler yüklendi) — sadece yeniden çiz.
     setState(() {});
-    if (_sub.isPremium && mounted) Navigator.pop(context, true);
+  }
+
+  void _startPurchaseWatchdog() {
+    _purchaseWatchdog?.cancel();
+    _purchaseWatchdog = Timer(const Duration(seconds: 60), () {
+      if (!mounted) return;
+      // 60 sn sonra hâlâ işleniyor ve premium gelmemişse satın alma akışı
+      // takılmış demektir (ör. Paid Apps Agreement aktif değil). Spinner'ı
+      // sıfırla, kullanıcıya net bilgi ver — ekran asla kilitli kalmasın.
+      if (_isProcessing && !_sub.isPremium) {
+        _purchaseInFlight = false;
+        setState(() => _isProcessing = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(_loc.t('PurchaseTimeout')),
+            backgroundColor: AppColors.card,
+            behavior: SnackBarBehavior.floating,
+            duration: const Duration(seconds: 5),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            action: SnackBarAction(
+              label: _loc.t('RestorePurchases'),
+              textColor: const Color(0xFF8B5CF6),
+              onPressed: _restore,
+            ),
+          ),
+        );
+      }
+    });
+  }
+
+  void _cancelPurchaseWatchdog() {
+    _purchaseWatchdog?.cancel();
+    _purchaseWatchdog = null;
   }
 
   void _purchase() async {
@@ -113,9 +221,17 @@ class _PaywallScreenState extends State<PaywallScreen> with SingleTickerProvider
       return;
     }
 
+    // Gerçek satın alma başlıyor — artık bekleme süreci kayıt altında.
+    // Watchdog'u başlat: satın alma akışı hiç sonuçlanmazsa buton 60 sn sonra
+    // otomatik kurtarılır (Apple 2.1(b) "süresiz yükleniyor" semptomuna karşı).
+    _purchaseInFlight = true;
+    _startPurchaseWatchdog();
+
     try {
       await _sub.buySubscription(product).timeout(const Duration(seconds: 30));
     } catch (_) {
+      _purchaseInFlight = false;
+      _cancelPurchaseWatchdog();
       if (mounted) setState(() => _isProcessing = false);
     }
   }
@@ -1084,39 +1200,90 @@ class _VideoBackground extends StatefulWidget {
 }
 
 class _VideoBackgroundState extends State<_VideoBackground> {
-  late VideoPlayerController _controller;
+  VideoPlayerController? _controller;
+  // Video herhangi bir nedenle çalışmazsa true olur ve statik arka plana düşeriz.
+  // Böylece ekran ASLA siyah/donmuş kalmaz — kullanıcı uygulamayı kapatmak
+  // zorunda kalmaz.
+  bool _failed = false;
 
   @override
   void initState() {
     super.initState();
-    // odeme.mp4 "ping-pong" versiyonu olarak bake edildi:
-    // dosya içinde ileri-oynayış + ters-oynayış zaten ardışık birleştirilmiş.
-    // Biz sadece düz loop yapıyoruz — sonuç akıcı boomerang efekti,
-    // donma yok çünkü seekTo zorlamıyoruz.
-    _controller = VideoPlayerController.asset('assets/images/odeme.mp4')
-      ..initialize().then((_) {
-        if (!mounted) return;
-        _controller.setLooping(true);
-        _controller.setVolume(0.0); // Sesi tamamen kapat (arka plan videosu)
-        setState(() {}); // Hazır olunca render tetikle
-        _controller.play();
-      }).catchError((e) {
-        debugPrint('⚠️ odeme.mp4 yüklenemedi: $e');
-      });
+    _initVideo();
+  }
+
+  Future<void> _initVideo() async {
+    // odeme.mp4 "ping-pong" versiyonu olarak bake edildi: dosya içinde
+    // ileri + ters oynayış ardışık birleştirilmiş. Biz sadece düz loop yapıyoruz.
+    //
+    // mixWithOthers: true — KRİTİK. video_player iOS'ta varsayılan olarak
+    // AVAudioSession'ı "playback" kategorisine alıp aktive eder. Bu uygulama
+    // just_audio + audio_service ile karmaşık bir ses oturumu yönetiyor; video
+    // bu oturumu ele geçirince platform view render'ı bozulup ekran kararabiliyor
+    // (donma → uygulamayı kapatma). mixWithOthers ile video kendi oturumunu
+    // zorlamaz, mevcut sesle uyumlu çalışır.
+    final controller = VideoPlayerController.asset(
+      'assets/images/odeme.mp4',
+      videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true),
+    );
+    _controller = controller;
+
+    // Çalışma anı hataları (codec, route düşmesi vb.) için dinleyici —
+    // hata olursa statik arka plana düş.
+    controller.addListener(() {
+      if (controller.value.hasError && mounted && !_failed) {
+        debugPrint('⚠️ odeme.mp4 oynatma hatası: ${controller.value.errorDescription}');
+        setState(() => _failed = true);
+      }
+    });
+
+    try {
+      await controller.initialize();
+      if (!mounted) {
+        controller.dispose();
+        return;
+      }
+      await controller.setLooping(true);
+      await controller.setVolume(0.0); // Arka plan videosu — tamamen sessiz
+      setState(() {}); // Hazır olunca render tetikle
+      await controller.play();
+    } catch (e) {
+      debugPrint('⚠️ odeme.mp4 yüklenemedi, statik arka plana geçiliyor: $e');
+      if (mounted) setState(() => _failed = true);
+    }
   }
 
   @override
   void dispose() {
-    _controller.dispose();
+    _controller?.dispose();
     super.dispose();
+  }
+
+  /// Video çalışmadığında gösterilen statik arka plan — asla siyah kalmaz.
+  Widget _staticBackground() {
+    return SizedBox.expand(
+      child: Image.asset(
+        'assets/images/paywall_bg.jpg',
+        fit: BoxFit.cover,
+        errorBuilder: (_, __, ___) => Container(color: const Color(0xFF080B16)),
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
-    if (!_controller.value.isInitialized) {
-      return Container(color: const Color(0xFF080B16)); // Yüklenirken boş kalsın
+    final c = _controller;
+    final size = c?.value.size ?? Size.zero;
+    final hasValidSize = size.width > 0 &&
+        size.height > 0 &&
+        size.width.isFinite &&
+        size.height.isFinite;
+
+    // Hata / yüklenmedi / geçersiz boyut → statik arka plan (donma yok).
+    if (_failed || c == null || !c.value.isInitialized || !hasValidSize) {
+      return _staticBackground();
     }
-    
+
     return SizedBox.expand(
       child: Transform.scale(
         scale: 1.20, // Ekranı %20 büyüterek dikeyde kaydırma payı (overflow) yaratıyoruz
@@ -1126,9 +1293,11 @@ class _VideoBackgroundState extends State<_VideoBackground> {
             fit: BoxFit.cover,
             alignment: Alignment.center,
             child: SizedBox(
-              width: _controller.value.size.width,
-              height: _controller.value.size.height,
-              child: VideoPlayer(_controller),
+              width: size.width,
+              height: size.height,
+              // RepaintBoundary: platform view'ı render ağacında izole eder,
+              // iOS'ta blur/gradient katmanlarıyla çakışıp kararmayı azaltır.
+              child: RepaintBoundary(child: VideoPlayer(c)),
             ),
           ),
         ),

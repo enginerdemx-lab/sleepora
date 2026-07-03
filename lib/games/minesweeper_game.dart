@@ -88,40 +88,94 @@ class _MinesweeperGameState extends State<MinesweeperGame> {
 
   /// Belirli (r,c) hücresine mayın YERLEŞTIRMEDEN mayınları dağıt.
   /// İlk tıklamada çağrılır, böylece ilk kare her zaman güvenli olur.
+  ///
+  /// Ayrıca: ilk tıkın flood'u TÜM güvenli kareleri tek seferde açıp anında
+  /// kazanmaya yol açan dağılımları reddeder (yeniden dağıtır). Bu sayede
+  /// "tek tuşla 0 saniyede bitti" durumu engellenir — en az bir güvenli kare
+  /// her zaman kapalı kalır.
   void _placeMines(int safeR, int safeC) {
     final rng = Random();
-    int placed = 0;
-    while (placed < mineCount) {
-      final r = rng.nextInt(rows);
-      final c = rng.nextInt(cols);
-      if (_grid[r][c].isMine) continue;
-      // İlk tıklanan karenin çevresine mayın koyma (3x3 güvenli alan)
-      if ((r - safeR).abs() <= 1 && (c - safeC).abs() <= 1) continue;
-      _grid[r][c].isMine = true;
-      placed++;
-    }
+    final totalSafe = rows * cols - mineCount;
+    const maxAttempts = 40;
 
-    // Komşu mayın sayılarını hesapla
+    for (int attempt = 0; ; attempt++) {
+      // Tahtayı temizle (yeniden deneme için)
+      for (final row in _grid) {
+        for (final cell in row) {
+          cell.isMine = false;
+          cell.adjacentMines = 0;
+        }
+      }
+
+      // Mayınları yerleştir — ilk tıklanan karenin 3x3 çevresi güvenli kalır.
+      int placed = 0;
+      while (placed < mineCount) {
+        final r = rng.nextInt(rows);
+        final c = rng.nextInt(cols);
+        if (_grid[r][c].isMine) continue;
+        if ((r - safeR).abs() <= 1 && (c - safeC).abs() <= 1) continue;
+        _grid[r][c].isMine = true;
+        placed++;
+      }
+
+      _computeAdjacency();
+
+      // İlk tık tüm güvenli kareleri tek seferde açmıyorsa bu dağılımı kabul et.
+      // (maxAttempts'a ulaşılırsa yine de kabul — sonsuz döngü güvenliği.)
+      if (attempt >= maxAttempts ||
+          _floodWouldRevealCount(safeR, safeC) < totalSafe) {
+        break;
+      }
+    }
+  }
+
+  /// Tüm açık (mayın olmayan) karelerin komşu mayın sayısını hesaplar.
+  void _computeAdjacency() {
     for (int r = 0; r < rows; r++) {
       for (int c = 0; c < cols; c++) {
-        if (!_grid[r][c].isMine) {
-          int count = 0;
-          for (int dr = -1; dr <= 1; dr++) {
-            for (int dc = -1; dc <= 1; dc++) {
-              final nr = r + dr, nc = c + dc;
-              if (nr >= 0 &&
-                  nr < rows &&
-                  nc >= 0 &&
-                  nc < cols &&
-                  _grid[nr][nc].isMine) {
-                count++;
-              }
+        if (_grid[r][c].isMine) continue;
+        int count = 0;
+        for (int dr = -1; dr <= 1; dr++) {
+          for (int dc = -1; dc <= 1; dc++) {
+            final nr = r + dr, nc = c + dc;
+            if (nr >= 0 &&
+                nr < rows &&
+                nc >= 0 &&
+                nc < cols &&
+                _grid[nr][nc].isMine) {
+              count++;
             }
           }
-          _grid[r][c].adjacentMines = count;
+        }
+        _grid[r][c].adjacentMines = count;
+      }
+    }
+  }
+
+  /// (sr,sc)'den başlayan flood'un kaç güvenli kareyi açacağını — grid'i
+  /// DEĞİŞTİRMEDEN — simüle eder. `_floodReveal` ile birebir aynı mantık.
+  int _floodWouldRevealCount(int sr, int sc) {
+    final visited = List.generate(rows, (_) => List.filled(cols, false));
+    int count = 0;
+    final stack = <List<int>>[
+      [sr, sc]
+    ];
+    while (stack.isNotEmpty) {
+      final cell = stack.removeLast();
+      final r = cell[0], c = cell[1];
+      if (r < 0 || r >= rows || c < 0 || c >= cols) continue;
+      if (visited[r][c] || _grid[r][c].isMine) continue;
+      visited[r][c] = true;
+      count++;
+      if (_grid[r][c].adjacentMines == 0) {
+        for (int dr = -1; dr <= 1; dr++) {
+          for (int dc = -1; dc <= 1; dc++) {
+            stack.add([r + dr, c + dc]);
+          }
         }
       }
     }
+    return count;
   }
 
   void _startTimer() {

@@ -27,10 +27,12 @@ class MinesweeperLevelConfig {
     final cols = 6 + sizeStep;             // 6, 7, 8, 9, 10
     final rows = 8 + sizeStep;             // 8, 9, 10, 11, 12
 
-    // Mayın yoğunluğu — seviyeyle birlikte artar
+    // Mayın yoğunluğu — seviyeyle birlikte artar.
+    // Taban %15'e çekildi ve minimum 8 mayın: erken seviyelerde tahta fazla
+    // seyrek kalıp ilk tıkta tamamen açılmasın (anında kazanma önlenir).
     final totalCells = rows * cols;
-    final density = 0.12 + (clamped / 100) * 0.10; // 0.12 → 0.22
-    final mines = (totalCells * density).round().clamp(5, totalCells - 9);
+    final density = 0.15 + (clamped / 100) * 0.08; // 0.15 → 0.23
+    final mines = (totalCells * density).round().clamp(8, totalCells - 9);
 
     // Süre limiti — mayın başına 8 saniye + 30 baz
     final timeLimit = mines * 8 + 30;

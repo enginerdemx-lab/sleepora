@@ -1,0 +1,46 @@
+{
+  "project_info": {
+    "project_number": "461986109206",
+    "project_id": "sleepora-89902",
+    "storage_bucket": "sleepora-89902.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:461986109206:android:6414d1e6ea63dbcd96a237",
+        "android_client_info": {
+          "package_name": "com.bebekuyku.app"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "461986109206-vbtfqd0llu1e9fmt4bmij3bulfvh7qcj.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCrs3yw0EO2enGbDriuSqFHElcipPrj4Ns"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "461986109206-vbtfqd0llu1e9fmt4bmij3bulfvh7qcj.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "461986109206-por2v13868hqq5tqe0o3cgiaobepmbl3.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.enginerdem.sleepora"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

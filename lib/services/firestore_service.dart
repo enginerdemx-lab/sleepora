@@ -429,6 +429,29 @@ class FirestoreService {
     }
   }
 
+  /// Paywall görüntülenme sayacını artırır (dönüşüm hunisi takibi).
+  Future<void> incrementPaywallView(String uid) async {
+    try {
+      await _userDoc(uid).set({
+        'paywall_views': FieldValue.increment(1),
+      }, SetOptions(merge: true));
+    } catch (e) {
+      debugPrint('❌ Firestore incrementPaywallView hatası: $e');
+    }
+  }
+
+  /// Oyun başına oynanma sayacını artırır (game_plays.{gameKey}).
+  Future<void> incrementGamePlay(String uid, String gameKey) async {
+    if (gameKey.isEmpty) return;
+    try {
+      await _userDoc(uid).set({
+        'game_plays': {gameKey: FieldValue.increment(1)},
+      }, SetOptions(merge: true));
+    } catch (e) {
+      debugPrint('❌ Firestore incrementGamePlay hatası: $e');
+    }
+  }
+
   // ═══════════════════════════════════════════════════════
   // Realtime Listeners
   // ═══════════════════════════════════════════════════════

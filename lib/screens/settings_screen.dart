@@ -1,3 +1,4 @@
+import 'dart:io' show Platform;
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:lottie/lottie.dart';
@@ -6,6 +7,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import '../theme/app_theme.dart';
 import '../services/notification_service.dart';
+import '../services/review_service.dart';
 import '../services/subscription_service.dart';
 import '../services/localization_service.dart';
 import '../services/auth_service.dart';
@@ -17,6 +19,7 @@ import '../services/ad_service.dart';
 import 'paywall_screen.dart';
 import 'login_screen.dart';
 import 'feedback_screen.dart';
+import 'onboarding_screen.dart';
 
 class SettingsScreen extends StatefulWidget {
   final ValueChanged<String>? onBabyNameChanged;
@@ -554,7 +557,8 @@ class _SettingsScreenState extends State<SettingsScreen> with TickerProviderStat
                   children: [
                     _SettingToggleRow(
                       assetPath: 'assets/images/hatirlatici.png',
-                      assetScale: 1.55, // çan küçük kalmıştı, bol zoom
+                      // Yeni ikon kendi içinde dolu — zoom kaldırıldı.
+                      assetScale: 1.0,
                       iconColor: const Color(0xFFFBBF24),
                       bgColor: const Color(0xFF3D3200),
                       label: _loc.t('SleepReminder'),
@@ -589,20 +593,8 @@ class _SettingsScreenState extends State<SettingsScreen> with TickerProviderStat
                                     trailing: GestureDetector(
                                       onTap: () async {
                                         final time = await showTimePicker(
-                                          context: context,
-                                          initialTime: _reminderTime,
-                                          builder: (context, child) => Theme(
-                                            data: ThemeData.dark().copyWith(
-                                              colorScheme: ColorScheme.dark(
-                                                primary: AppColors.purple,
-                                                onPrimary: Colors.white,
-                                                surface: const Color(0xFF1A1025),
-                                                onSurface: Colors.white,
-                                              ),
-                                            ),
-                                            child: child!,
-                                          ),
-                                        );
+                                            context: context,
+                                            initialTime: _reminderTime);
                                         if (time != null) {
                                           setState(() => _reminderTime = time);
                                           _saveReminderTime(time);
@@ -855,12 +847,9 @@ class _SettingsScreenState extends State<SettingsScreen> with TickerProviderStat
                         colors: [Color(0xFFFFB347), Color(0xFFFFD700)],
                       ),
                       label: _loc.t('RateApp'),
-                      onTap: () async {
-                        final uri = Uri.parse('https://apps.apple.com/app/id6745027461');
-                        if (await canLaunchUrl(uri)) {
-                          await launchUrl(uri, mode: LaunchMode.externalApplication);
-                        }
-                      },
+                      // Platforma göre doğru mağazaya yönlendirir
+                      // (Android → Google Play, iOS → App Store).
+                      onTap: () => ReviewService.openStoreListing(),
                     ),
                     _RowDivider(),
                     _ContactRow(
@@ -941,6 +930,22 @@ class _SettingsScreenState extends State<SettingsScreen> with TickerProviderStat
                           await launchUrl(uri, mode: LaunchMode.externalApplication);
                         }
                       },
+                    ),
+                    _RowDivider(),
+                    _ContactRow(
+                      icon: Icons.play_circle_outline_rounded,
+                      iconColor: Colors.white,
+                      gradient: const LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [Color(0xFF8B5CF6), Color(0xFFA78BFA)],
+                      ),
+                      label: _loc.t('ReplayOnboarding'),
+                      onTap: () => Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) => const OnboardingScreen(),
+                        ),
+                      ),
                     ),
                   ],
                 ),
@@ -1085,6 +1090,95 @@ class _SettingsScreenState extends State<SettingsScreen> with TickerProviderStat
   /// Sol tarafta animasyonlu elmas (Lottie), sağında "Sleepora Plus" başlığı
   /// ve abonelik tipine göre durum metni ("Ömür Boyu", "{N} gün kaldı" veya
   /// fallback "Aktif").
+  /// Plus durum metnini üretir ("Ömür Boyu" / "{n} gün kaldı" / plan adı).
+  String _plusStatusText() {
+    final svc = SubscriptionService();
+    if (svc.isLifetime) return _loc.t('Lifetime');
+    if (svc.remainingDays != null) {
+      return _loc.t('DaysLeft').replaceAll('{n}', '${svc.remainingDays}');
+    }
+    if (svc.subscriptionPlan == 'monthly') return _loc.t('MonthlyPlan');
+    if (svc.subscriptionPlan == 'yearly') return _loc.t('YearlyPlan');
+    return _loc.t('ActiveBadge');
+  }
+
+  /// Cihazın platformuna göre sistem "Abonelikleri Yönet" sayfasını açar.
+  /// iOS → App Store hesap abonelikleri, Android → Play Store abonelikleri.
+  Future<void> _openManageSubscriptions() async {
+    final url = Uri.parse(
+      Platform.isIOS
+          ? 'https://apps.apple.com/account/subscriptions'
+          : 'https://play.google.com/store/account/subscriptions',
+    );
+    try {
+      await launchUrl(url, mode: LaunchMode.externalApplication);
+    } catch (_) {}
+  }
+
+  /// Premium kullanıcı üst rozete dokununca: paywall yerine durum penceresi.
+  /// Plus durumunu gösterir ve "Aboneliği Yönet" ile sistem abonelik sayfasını
+  /// açar. Böylece zaten abone olan kullanıcıya satış ekranı çıkmaz.
+  void _showPlusStatusDialog() {
+    final loc = _loc;
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1235),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(20),
+          side: BorderSide(
+            color: const Color(0xFFB794F4).withValues(alpha: 0.35),
+          ),
+        ),
+        title: Row(
+          children: [
+            const Icon(Icons.diamond_rounded, color: Color(0xFFB794F4), size: 22),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                loc.t('PlusActiveTitle'),
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w700,
+                  fontSize: 17,
+                ),
+              ),
+            ),
+          ],
+        ),
+        content: Text(
+          _plusStatusText(),
+          style: TextStyle(
+            color: Colors.white.withValues(alpha: 0.85),
+            fontSize: 15,
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: Text(
+              loc.t('Ok'),
+              style: const TextStyle(color: Colors.white70),
+            ),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              _openManageSubscriptions();
+            },
+            child: Text(
+              loc.t('ManageSubscription'),
+              style: const TextStyle(
+                color: Color(0xFFB794F4),
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildHeaderPlusBadge() {
     final svc = SubscriptionService();
     final loc = _loc;
@@ -1104,10 +1198,9 @@ class _SettingsScreenState extends State<SettingsScreen> with TickerProviderStat
     }
 
     return GestureDetector(
-      onTap: () => Navigator.push(
-        context,
-        MaterialPageRoute(builder: (_) => const PaywallScreen()),
-      ),
+      // Premium kullanıcı: paywall AÇMA. Bunun yerine durum + "Aboneliği Yönet"
+      // penceresini göster (zaten Plus olan kullanıcıya satış ekranı çıkmasın).
+      onTap: _showPlusStatusDialog,
       child: Container(
         padding: const EdgeInsets.fromLTRB(8, 6, 12, 6),
         decoration: BoxDecoration(
@@ -1441,78 +1534,138 @@ class _SettingsScreenState extends State<SettingsScreen> with TickerProviderStat
     );
   }
 
-  void _showEditNameDialog(String currentName) {
+  /// Bir [Duration]'ı "kalan gün" sayısına çevirir (yukarı yuvarlar, min 1).
+  int _cooldownDays(Duration d) =>
+      (d.inMinutes / (60 * 24)).ceil().clamp(1, 999);
+
+  void _showEditNameDialog(String currentName) async {
+    // Bekleme süresi dolmuş mu? Diyalog açılmadan önce kontrol et.
+    Duration? remaining = await _auth.nameChangeRemaining();
+    if (!mounted) return;
+
     final controller = TextEditingController(text: currentName);
-    bool _saving = false;
+    bool saving = false;
     showDialog(
       context: context,
       builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setLocal) => AlertDialog(
-          backgroundColor: const Color(0xFF1A1025),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-          title: Text(
-            _loc.t('EditNameTitle'),
-            style: const TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.w700),
-          ),
-          content: TextField(
-            controller: controller,
-            autofocus: true,
-            style: const TextStyle(color: Colors.white, fontSize: 15),
-            decoration: InputDecoration(
-              filled: true,
-              fillColor: Colors.white.withValues(alpha: 0.06),
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide.none,
+        builder: (ctx, setLocal) {
+          final locked = remaining != null;
+          return AlertDialog(
+            backgroundColor: const Color(0xFF1A1025),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+            title: Text(
+              _loc.t('EditNameTitle'),
+              style: const TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.w700),
+            ),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                TextField(
+                  controller: controller,
+                  autofocus: !locked,
+                  enabled: !locked,
+                  style: const TextStyle(color: Colors.white, fontSize: 15),
+                  decoration: InputDecoration(
+                    filled: true,
+                    fillColor: Colors.white.withValues(alpha: 0.06),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide.none,
+                    ),
+                    hintText: _loc.t('EditNameHint'),
+                    hintStyle: TextStyle(color: Colors.white.withValues(alpha: 0.25), fontSize: 13),
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                // ── Bilgi / uyarı: 3 günlük kural ──
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(
+                      locked ? Icons.lock_clock_rounded : Icons.info_outline_rounded,
+                      size: 15,
+                      color: locked
+                          ? const Color(0xFFFBBF24)
+                          : Colors.white.withValues(alpha: 0.4),
+                    ),
+                    const SizedBox(width: 7),
+                    Expanded(
+                      child: Text(
+                        locked
+                            ? _loc.t('NameChangeCooldownError').replaceAll(
+                                '{n}', '${_cooldownDays(remaining!)}')
+                            : _loc.t('NameChangeCooldownInfo'),
+                        style: TextStyle(
+                          color: locked
+                              ? const Color(0xFFFBBF24)
+                              : Colors.white.withValues(alpha: 0.45),
+                          fontSize: 11.5,
+                          height: 1.35,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: Text(_loc.t('BtnCancel'), style: const TextStyle(color: Colors.white38)),
               ),
-              hintText: _loc.t('EditNameHint'),
-              hintStyle: TextStyle(color: Colors.white.withValues(alpha: 0.25), fontSize: 13),
-              contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: Text(_loc.t('BtnCancel'), style: const TextStyle(color: Colors.white38)),
-            ),
-            TextButton(
-              onPressed: _saving ? null : () async {
-                final name = controller.text.trim();
-                if (name.isEmpty) return;
+              TextButton(
+                onPressed: (saving || locked) ? null : () async {
+                  final name = controller.text.trim();
+                  if (name.isEmpty) return;
 
-                // Küfür filtresi kontrolü
-                if (ProfanityFilter.containsProfanity(name)) {
+                  // Küfür filtresi kontrolü
+                  if (ProfanityFilter.containsProfanity(name)) {
+                    if (ctx.mounted) Navigator.pop(ctx);
+                    if (mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                        content: Text(_loc.t('ProfanityWarning')),
+                        backgroundColor: AppColors.red,
+                        behavior: SnackBarBehavior.floating,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      ));
+                    }
+                    return;
+                  }
+
+                  // Bekleme süresi son bir kez doğrulanır (yarış durumlarına karşı).
+                  final stillRemaining = await _auth.nameChangeRemaining();
+                  if (stillRemaining != null) {
+                    setLocal(() => remaining = stillRemaining);
+                    return;
+                  }
+
+                  setLocal(() => saving = true);
+                  final ok = await _auth.updateDisplayName(name);
                   if (ctx.mounted) Navigator.pop(ctx);
                   if (mounted) {
                     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                      content: Text(_loc.t('ProfanityWarning')),
-                      backgroundColor: AppColors.red,
+                      content: Text(ok ? _loc.t('EditNameSuccess') : _loc.t('EditNameError')),
+                      backgroundColor: ok ? AppColors.green : AppColors.red,
                       behavior: SnackBarBehavior.floating,
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                     ));
                   }
-                  return;
-                }
-
-                setLocal(() => _saving = true);
-                final ok = await _auth.updateDisplayName(name);
-                if (ctx.mounted) Navigator.pop(ctx);
-                if (mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                    content: Text(ok ? _loc.t('EditNameSuccess') : _loc.t('EditNameError')),
-                    backgroundColor: ok ? AppColors.green : AppColors.red,
-                    behavior: SnackBarBehavior.floating,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                  ));
-                }
-              },
-              child: Text(
-                _saving ? '...' : _loc.t('BtnSave'),
-                style: const TextStyle(color: Color(0xFF8B5CF6), fontWeight: FontWeight.w700),
+                },
+                child: Text(
+                  saving ? '...' : _loc.t('BtnSave'),
+                  style: TextStyle(
+                    color: (saving || locked)
+                        ? Colors.white24
+                        : const Color(0xFF8B5CF6),
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
               ),
-            ),
-          ],
-        ),
+            ],
+          );
+        },
       ),
     );
   }

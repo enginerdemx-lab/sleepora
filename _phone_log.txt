@@ -1,0 +1,14 @@
+==== BUILD BASLADI:  5 Haz 2026 Cum +03 01:02:48 ====
+Building com.enginerdem.sleepora for device (ios-release)...
+To ensure your app continues to launch on upcoming iOS versions, UIScene lifecycle support will soon be required. Please see https://flutter.dev/to/uiscene-migration for the migration guide.
+
+Automatically signing iOS for device deployment using specified development team in Xcode project: 7483SK2P69
+Running Xcode build...                                          
+Xcode build done.                                           44,4s
+✓ Built build/ios/iphoneos/Runner.app (165.2MB)
+BUILD_EXIT=0
+==== INSTALL BASLADI:  5 Haz 2026 Cum +03 01:03:40 ====
+Installing com.enginerdem.sleepora to engin.erdem iPhone’u...
+Uninstalling old version...
+INSTALL_EXIT=0
+==== BITTI:  5 Haz 2026 Cum +03 01:04:11 ====

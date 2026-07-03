@@ -46,6 +46,41 @@ class NotificationService {
     }
   }
 
+  /// iOS ve Android 13+ (API 33+) çalışma zamanı bildirim izinlerini ister.
+  ///
+  /// Android <13'te ayrı bir izin gerekmez (plugin `null` döner → izinli
+  /// sayılır). Android 13+'te POST_NOTIFICATIONS izni verilmezse bildirimler
+  /// hiç gösterilmez — bu yüzden hatırlatıcı planlanmadan ÖNCE çağrılır.
+  ///
+  /// Dönüş: bildirim gösterme izni verildi mi?
+  Future<bool> _ensurePermissions() async {
+    // iOS / macOS
+    final iOSImpl = _notificationsPlugin
+        .resolvePlatformSpecificImplementation<IOSFlutterLocalNotificationsPlugin>();
+    if (iOSImpl != null) {
+      final granted = await iOSImpl.requestPermissions(
+        alert: true,
+        badge: true,
+        sound: true,
+      );
+      return granted ?? true;
+    }
+
+    // Android 13+ → POST_NOTIFICATIONS runtime izni
+    final androidImpl = _notificationsPlugin
+        .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
+    if (androidImpl != null) {
+      final granted = await androidImpl.requestNotificationsPermission();
+      return granted ?? true; // <13 → null → izin gerekmez
+    }
+
+    return true;
+  }
+
+  /// Yalnızca bildirim iznini ister (planlama yapmadan). Kullanıcı hatırlatıcıyı
+  /// açtığında UI bunu çağırıp sonucu kontrol edebilir.
+  Future<bool> requestPermission() => _ensurePermissions();
+
   /// Ana uyku hatırlatıcısı + (opsiyonel) hazırlık hatırlatıcısı planlar.
   ///
   /// [time] ana hatırlatma saati (uyku vakti).
@@ -61,15 +96,8 @@ class NotificationService {
   }) async {
     if (!_initialized) return;
 
-    // Check and request iOS permissions before scheduling
-    final iOSImplementation = _notificationsPlugin.resolvePlatformSpecificImplementation<IOSFlutterLocalNotificationsPlugin>();
-    if (iOSImplementation != null) {
-      await iOSImplementation.requestPermissions(
-        alert: true,
-        badge: true,
-        sound: true,
-      );
-    }
+    // iOS + Android 13+ bildirim izinlerini iste (izin yoksa bildirim çıkmaz).
+    await _ensurePermissions();
 
     // Sadece reminder ID'lerini iptal et (id=0 ana, id=1 ön-hatırlatma).
     // Trial reminder (id=2) gibi diğer bildirimleri etkileme.
@@ -113,7 +141,7 @@ class NotificationService {
       body: loc.t('NotifReminderBody'),
       scheduledDate: scheduledDate,
       notificationDetails: notifDetails,
-      androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+      androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
       matchDateTimeComponents: DateTimeComponents.time,
     );
 
@@ -152,7 +180,7 @@ class NotificationService {
         body: loc.t('NotifPreBody').replaceAll('{n}', '$preReminderMinutesBefore'),
         scheduledDate: preDate,
         notificationDetails: preNotifDetails,
-        androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+        androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
         matchDateTimeComponents: DateTimeComponents.time,
       );
     }
@@ -170,12 +198,8 @@ class NotificationService {
   Future<void> scheduleTrialEndReminder() async {
     if (!_initialized) return;
 
-    // iOS izin iste
-    final iOSImpl = _notificationsPlugin
-        .resolvePlatformSpecificImplementation<IOSFlutterLocalNotificationsPlugin>();
-    if (iOSImpl != null) {
-      await iOSImpl.requestPermissions(alert: true, badge: true, sound: true);
-    }
+    // iOS + Android 13+ bildirim izinlerini iste
+    await _ensurePermissions();
 
     final scheduledDate = tz.TZDateTime.now(tz.local).add(const Duration(days: 5));
 
@@ -207,7 +231,7 @@ class NotificationService {
       body: loc.t('NotifTrialBody'),
       scheduledDate: scheduledDate,
       notificationDetails: notifDetails,
-      androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+      androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
     );
   }
 }

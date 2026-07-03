@@ -56,7 +56,6 @@ class _MiniPlayerState extends State<MiniPlayer> with TickerProviderStateMixin {
   }
 
   // Zamanlayıcı
-  int? _timerMinutes;
   int _remainingSeconds = 0;
   bool _timerActive = false;
 
@@ -110,7 +109,6 @@ class _MiniPlayerState extends State<MiniPlayer> with TickerProviderStateMixin {
 
   void _startTimer(int minutes) {
     setState(() {
-      _timerMinutes = minutes;
       _remainingSeconds = minutes * 60;
       _timerActive = true;
     });
@@ -127,7 +125,6 @@ class _MiniPlayerState extends State<MiniPlayer> with TickerProviderStateMixin {
         }
         if (_remainingSeconds <= 0) {
           _timerActive = false;
-          _timerMinutes = null;
           widget.onPlayPause(); // Durdur
           // Timer bitti — giriş yapılmamışsa uyku takibi prompt'u
           if (!AuthService().isLoggedIn) {
@@ -280,7 +277,6 @@ class _MiniPlayerState extends State<MiniPlayer> with TickerProviderStateMixin {
   void _cancelTimer() {
     setState(() {
       _timerActive = false;
-      _timerMinutes = null;
       _remainingSeconds = 0;
     });
   }

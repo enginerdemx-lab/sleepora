@@ -23,6 +23,7 @@ import 'settings_screen.dart';
 import 'paywall_screen.dart';
 import '../services/localization_service.dart';
 import '../services/sleep_tracking_service.dart';
+import '../services/remote_config_service.dart';
 
 // Hangi oynatıcının şu an "ön planda" (aktif) olduğunu takip eden enum.
 enum ActivePlayer { none, single, mixer, shuffle }
@@ -125,14 +126,28 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   Timer? _previewTimer;
   int _previewRemainingSeconds = 0;
 
+  // Plus süresi doldu pop-up'ı aynı anda iki kez açılmasın diye.
+  bool _plusExpiredDialogVisible = false;
+
   @override
   void initState() {
     super.initState();
     _loadBabyName();
     _loc.addListener(_onLanguageChanged);
-    SubscriptionService().addListener(_onLanguageChanged);
+    SubscriptionService().addListener(_onSubscriptionChanged);
+    // Plus süresi zaten dolmuşsa (init önbellekten erken set etmiş olabilir)
+    // ilk frame'de kontrol et.
+    WidgetsBinding.instance.addPostFrameCallback((_) => _maybeShowPlusExpiredDialog());
+    WidgetsBinding.instance.addPostFrameCallback((_) => _maybeShowAnnouncement());
+    // Puanlama: uygulama açıldıktan 5 saniye sonra (onboarding/login sırasında değil).
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      ReviewService.showReviewDialog(context);
+      Future.delayed(const Duration(seconds: 5), () {
+        if (!mounted) return;
+        ReviewService.showReviewDialog(
+          context,
+          isPremium: SubscriptionService().isPremium,
+        );
+      });
     });
     _initAudioSessionListener();
     _startWatchdog();
@@ -159,12 +174,15 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   ///   1) Audio session'ı yeniden aktive et
   ///   2) Watchdog'u zaman beklemeden hemen tetikle (cooldown'u bypass et)
   Future<void> _onAppResumed() async {
-    // Audio session'ı zorla aktive et
-    try {
-      final session = await AudioSession.instance;
-      await session.setActive(true);
-    } catch (e) {
-      debugPrint('⚠️ AppLifecycle resumed → session reaktive hatası: $e');
+    // Audio session'ı yeniden aktive et — YALNIZCA Sleepora kendi sesini
+    // çalıyorsa. Çalmıyorsa kullanıcı başka uygulamadan müzik dinliyor olabilir;
+    // bu durumda oturuma dokunma ki dış müzik kesilmesin.
+    if (_isPlaying || _mixerPlaying || _isShufflePlaying) {
+      try {
+        await _activateSleeporaAudio();
+      } catch (e) {
+        debugPrint('⚠️ AppLifecycle resumed → session reaktive hatası: $e');
+      }
     }
 
     if (!mounted) return;
@@ -193,8 +211,71 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   /// NOT: `handleInterruptions: false` ile oluşturulan `AudioPlayer`'lar
   /// just_audio'nun kendi auto-resume mekanizmasını kullanmıyor, bu yüzden
   /// buradaki manuel kontrol state desync'e yol açmıyor.
+
+  // ── Ses oturumu modları ────────────────────────────────────────────────
+  // Sleepora kendi sesini ÇALMADIĞINDA başka uygulamaların müziğini KESMEMELİ
+  // (kullanıcı Spotify vb. dinlerken sadece oyun oynamak için girebilir). Bu
+  // yüzden boştayken oturum `mixWithOthers` ile yapılandırılır → dış ses devam
+  // eder. Sleepora kendi sesini çaldığı an oturum `none` (mixsiz) yapılıp
+  // aktive edilir → dış müzik o anda durdurulur. Böylece dış ses YALNIZCA
+  // Sleepora'dan ses açıldığında kesilir.
+  static const AudioSessionConfiguration _idleMixAudioConfig =
+      AudioSessionConfiguration(
+    avAudioSessionCategory: AVAudioSessionCategory.playback,
+    avAudioSessionCategoryOptions: AVAudioSessionCategoryOptions.mixWithOthers,
+    avAudioSessionMode: AVAudioSessionMode.defaultMode,
+    avAudioSessionRouteSharingPolicy:
+        AVAudioSessionRouteSharingPolicy.defaultPolicy,
+    avAudioSessionSetActiveOptions: AVAudioSessionSetActiveOptions.none,
+    androidAudioAttributes: AndroidAudioAttributes(
+      contentType: AndroidAudioContentType.music,
+      flags: AndroidAudioFlags.none,
+      usage: AndroidAudioUsage.media,
+    ),
+    androidAudioFocusGainType: AndroidAudioFocusGainType.gain,
+    androidWillPauseWhenDucked: true,
+  );
+
+  static const AudioSessionConfiguration _exclusiveAudioConfig =
+      AudioSessionConfiguration(
+    avAudioSessionCategory: AVAudioSessionCategory.playback,
+    avAudioSessionCategoryOptions: AVAudioSessionCategoryOptions.none,
+    avAudioSessionMode: AVAudioSessionMode.defaultMode,
+    avAudioSessionRouteSharingPolicy:
+        AVAudioSessionRouteSharingPolicy.defaultPolicy,
+    avAudioSessionSetActiveOptions: AVAudioSessionSetActiveOptions.none,
+    androidAudioAttributes: AndroidAudioAttributes(
+      contentType: AndroidAudioContentType.music,
+      flags: AndroidAudioFlags.none,
+      usage: AndroidAudioUsage.media,
+    ),
+    androidAudioFocusGainType: AndroidAudioFocusGainType.gain,
+    androidWillPauseWhenDucked: true,
+  );
+
+  /// Sleepora kendi sesini çalmaya başlamadan HEMEN ÖNCE çağrılır.
+  /// Oturumu mixsiz (exclusive) `playback` yapıp aktive eder → dış uygulamanın
+  /// müziği o an durdurulur. Bu, dış sesin SADECE Sleepora çaldığında
+  /// kesilmesini garanti eder.
+  Future<void> _activateSleeporaAudio() async {
+    try {
+      final session = await AudioSession.instance;
+      await session.configure(_exclusiveAudioConfig);
+      await session.setActive(true);
+    } catch (e) {
+      debugPrint('⚠️ _activateSleeporaAudio hata: $e');
+    }
+  }
+
   void _initAudioSessionListener() {
-    AudioSession.instance.then((session) {
+    AudioSession.instance.then((session) async {
+      // Boşta (henüz Sleepora'dan ses çalınmadı): mixWithOthers ile yapılandır
+      // ki app açılınca / ana ekran yüklenince dış müzik kesilmesin. Kullanıcı
+      // bir ses çaldığında `_activateSleeporaAudio()` oturumu exclusive yapıp
+      // dış sesi durdurur; o an iOS Now Playing kontrolleri de görünür olur.
+      try {
+        await session.configure(_idleMixAudioConfig);
+      } catch (_) {}
       _interruptionSub = session.interruptionEventStream.listen((event) async {
         if (!mounted) return;
         if (event.begin) {
@@ -498,6 +579,66 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     if (mounted) setState(() {});
   }
 
+  /// SubscriptionService değişiminde: UI'ı yenile + Plus süresi dolduysa pop-up göster.
+  void _onSubscriptionChanged() {
+    if (!mounted) return;
+    setState(() {});
+    _maybeShowPlusExpiredDialog();
+  }
+
+  /// Plus süresi yeni dolduysa bir kerelik "yeniden Plus'a geç" dialogu gösterir.
+  void _maybeShowPlusExpiredDialog() {
+    final sub = SubscriptionService();
+    if (!sub.hasPendingExpiryNotice || _plusExpiredDialogVisible) return;
+    sub.clearExpiryNotice();
+    _plusExpiredDialogVisible = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        _plusExpiredDialogVisible = false;
+        return;
+      }
+      PlusDialog.show(
+        context,
+        title: _loc.t('PlusExpiredTitle'),
+        description: _loc.t('PlusExpiredDesc'),
+        secondaryIcon: Icons.lock_clock_rounded,
+      ).whenComplete(() => _plusExpiredDialogVisible = false);
+    });
+  }
+
+  /// Admin panelden gelen duyuruyu (varsa) metin başına bir kez gösterir.
+  Future<void> _maybeShowAnnouncement() async {
+    final rc = RemoteConfigService();
+    if (!rc.announcementEnabled) return;
+    final text = rc.announcementText.trim();
+    if (text.isEmpty) return;
+    final prefs = await SharedPreferences.getInstance();
+    if (prefs.getString('announcement_seen') == text) return;
+    await prefs.setString('announcement_seen', text);
+    if (!mounted) return;
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1A1025),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Row(
+          children: [
+            const Icon(Icons.campaign_rounded, color: AppColors.purple, size: 22),
+            const SizedBox(width: 8),
+            const Text('Sleepora', style: TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.w700)),
+          ],
+        ),
+        content: Text(text, style: TextStyle(color: Colors.white.withValues(alpha: 0.82), fontSize: 14, height: 1.45)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: Text(_loc.t('BtnDone'), style: const TextStyle(color: AppColors.purpleLight, fontWeight: FontWeight.w600)),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _loadBabyName() async {
     final prefs = await SharedPreferences.getInstance();
     setState(() {
@@ -526,7 +667,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   @override
   void dispose() {
     _loc.removeListener(_onLanguageChanged);
-    SubscriptionService().removeListener(_onLanguageChanged);
+    SubscriptionService().removeListener(_onSubscriptionChanged);
     _positionSub?.cancel();
     _completionSub?.cancel();
     _interruptionSub?.cancel();
@@ -603,6 +744,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     _syncNowPlaying();
 
     if (sound != null) {
+      // Sleepora kendi sesini çalmaya başlıyor → oturumu exclusive yapıp dış
+      // müziği şimdi durdur (yalnızca buradan ses açılınca).
+      await _activateSleeporaAudio();
       // Uyku takibini başlat (sadece gerçek oturumlar — preview hariç)
       if (!isPreview) {
         // Ses geçişinde önce mevcut oturumu kapat — yoksa üzerine yazılıp kaybolur
@@ -638,9 +782,18 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         await _audioPlayer1.setVolume(1.0); // reset: iOS session'ı zorla aktive et
         await _audioPlayer1.play();
         await _audioPlayer1.setVolume(0.0); // hemen mute, fade-in halleder
-        // Crossfade loop'unu başlat — ses bitmeden ~2.5 sn önce crossfade yapar
+        // Döngü stratejisi:
+        //  • crossfadeLoop=true → crossfade loop (yumuşak ambiyans sesleri).
+        //  • crossfadeLoop=false → crossfade KAPALI; native gapless loop
+        //    (LoopMode.one zaten yukarıda set edildi). İnsan sesi/ninni
+        //    seslerinde crossfade iki kopyayı üst üste bindirip cırlatıyordu.
         if (!isPreview) {
-          _startCrossfadeLoop(sound);
+          if (sound.crossfadeLoop) {
+            _startCrossfadeLoop(sound);
+          } else {
+            // Önceki sesten kalan crossfade dinleyicilerini temizle.
+            _stopCrossfadeLoop();
+          }
         }
         // Fade-in: arka planda sesi aç
         _fadeInPlayer(_audioPlayer1, gen: playGen, durationMs: 300);
@@ -959,6 +1112,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     // Önce temizle
     await _stopMixerPlayers();
 
+    // Sleepora kendi sesini çalmaya başlıyor → oturumu exclusive yapıp dış
+    // müziği şimdi durdur (yalnızca buradan ses açılınca).
+    await _activateSleeporaAudio();
+
     // Ses sayısına göre volume ayarla
     for (final sound in sounds) {
       try {
@@ -1202,11 +1359,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     });
     _syncNowPlaying();
     try {
-      // iOS'ta resume öncesi audio session'ı yeniden aktive et
-      try {
-        final session = await AudioSession.instance;
-        await session.setActive(true);
-      } catch (_) {}
+      // iOS'ta resume öncesi oturumu exclusive yapıp yeniden aktive et
+      // (devam eden Sleepora sesi → dış müzik durmalı).
+      await _activateSleeporaAudio();
       await active.play();
       // Resume sonrası crossfade loop'unu yeniden başlat
       if (_playingSound != null) {
@@ -1242,11 +1397,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     _syncNowPlaying();
 
     try {
-      // Audio session'ı garanti olarak aktive et
-      try {
-        final session = await AudioSession.instance;
-        await session.setActive(true);
-      } catch (_) {}
+      // Oturumu exclusive yapıp garanti olarak aktive et (Sleepora sesi devam
+      // ediyor → dış müzik durmalı).
+      await _activateSleeporaAudio();
 
       // Önceki crossfade loop'unu temizle (varsa) — yeniden başlatacağız
       _stopCrossfadeLoop();
@@ -1448,7 +1601,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     setState(() {
       _playingSound = nextSound;
     });
-    
+
+    // Sleepora kendi sesini çalmaya başlıyor → oturumu exclusive yapıp dış
+    // müziği şimdi durdur (yalnızca buradan ses açılınca).
+    await _activateSleeporaAudio();
+
     final oldPlayer = _primaryPlayer;
     _activePlayerIndex = _activePlayerIndex == 1 ? 2 : 1;
     final newPlayer = _primaryPlayer;

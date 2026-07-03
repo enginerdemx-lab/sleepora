@@ -1,0 +1,38 @@
+==== ANALYZE BASLADI: 31 May 2026 Paz +03 00:17:39 ====
+
+┌─────────────────────────────────────────────────────────┐
+│ A new version of Flutter is available!                  │
+│                                                         │
+│ To update to the latest version, run "flutter upgrade". │
+└─────────────────────────────────────────────────────────┘
+Analyzing 2 items...                                            
+
+   info • The import of 'dart:ui' is unnecessary because all of the used elements are also provided by the import of 'package:flutter/material.dart' • lib/screens/home_screen.dart:2:8 • unnecessary_import
+warning • Unused import: '../services/auth_service.dart' • lib/screens/home_screen.dart:16:8 • unused_import
+warning • Unused import: 'paywall_screen.dart' • lib/screens/home_screen.dart:23:8 • unused_import
+warning • The value of the local variable 'wasEmpty' isn't used • lib/screens/home_screen.dart:905:11 • unused_local_variable
+   info • Unnecessary use of multiple underscores • lib/screens/onboarding_screen.dart:232:26 • unnecessary_underscores
+   info • Unnecessary use of multiple underscores • lib/screens/onboarding_screen.dart:232:30 • unnecessary_underscores
+   info • Unnecessary use of multiple underscores • lib/screens/onboarding_screen.dart:233:39 • unnecessary_underscores
+   info • Unnecessary use of multiple underscores • lib/screens/onboarding_screen.dart:387:25 • unnecessary_underscores
+   info • Unnecessary use of multiple underscores • lib/screens/onboarding_screen.dart:387:29 • unnecessary_underscores
+   info • Unnecessary use of multiple underscores • lib/screens/onboarding_screen.dart:441:33 • unnecessary_underscores
+   info • Unnecessary use of multiple underscores • lib/screens/onboarding_screen.dart:441:37 • unnecessary_underscores
+   info • Unnecessary use of multiple underscores • lib/screens/onboarding_screen.dart:628:49 • unnecessary_underscores
+   info • Unnecessary use of multiple underscores • lib/screens/onboarding_screen.dart:628:53 • unnecessary_underscores
+   info • Unnecessary use of multiple underscores • lib/screens/onboarding_screen.dart:685:28 • unnecessary_underscores
+   info • Unnecessary use of multiple underscores • lib/screens/onboarding_screen.dart:742:33 • unnecessary_underscores
+   info • Unnecessary use of multiple underscores • lib/screens/onboarding_screen.dart:742:37 • unnecessary_underscores
+   info • Unnecessary use of multiple underscores • lib/screens/onboarding_screen.dart:765:26 • unnecessary_underscores
+   info • Unnecessary use of multiple underscores • lib/screens/onboarding_screen.dart:824:43 • unnecessary_underscores
+   info • Unnecessary use of multiple underscores • lib/screens/onboarding_screen.dart:824:47 • unnecessary_underscores
+   info • 'activeColor' is deprecated and shouldn't be used. Use activeThumbColor or activeTrackColor instead. This feature was deprecated after v3.31.0-2.0.pre • lib/screens/onboarding_screen.dart:850:19 • deprecated_member_use
+   info • 'activeColor' is deprecated and shouldn't be used. Use activeThumbColor or activeTrackColor instead. This feature was deprecated after v3.31.0-2.0.pre • lib/screens/onboarding_screen.dart:931:39 • deprecated_member_use
+   info • Unnecessary use of multiple underscores • lib/screens/onboarding_screen.dart:1028:33 • unnecessary_underscores
+   info • Unnecessary use of multiple underscores • lib/screens/onboarding_screen.dart:1028:37 • unnecessary_underscores
+   info • Unnecessary use of multiple underscores • lib/screens/onboarding_screen.dart:1310:20 • unnecessary_underscores
+   info • Unnecessary use of multiple underscores • lib/screens/onboarding_screen.dart:1450:20 • unnecessary_underscores
+
+25 issues found. (ran in 2.7s)
+ANALYZE_EXIT=1
+==== ANALYZE BITTI ====

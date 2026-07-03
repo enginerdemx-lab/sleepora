@@ -8,6 +8,7 @@ import '../games/block_puzzle/block_puzzle_game.dart';
 import '../services/localization_service.dart';
 import '../services/leaderboard_service.dart';
 import '../services/auth_service.dart';
+import '../services/firestore_service.dart';
 import 'leaderboard_screen.dart';
 
 class GamesScreen extends StatefulWidget {
@@ -245,8 +246,13 @@ class _GameCardState extends State<_GameCard> {
       onTapDown: (_) => setState(() => _pressed = true),
       onTapUp: (_) => setState(() => _pressed = false),
       onTapCancel: () => setState(() => _pressed = false),
-      onTap: () => Navigator.push(
-          context, MaterialPageRoute(builder: (_) => g.screen)),
+      onTap: () {
+        final uid = AuthService().currentUser?.uid;
+        if (uid != null) {
+          FirestoreService().incrementGamePlay(uid, g.screen.runtimeType.toString());
+        }
+        Navigator.push(context, MaterialPageRoute(builder: (_) => g.screen));
+      },
       child: AnimatedScale(
         scale: _pressed ? 0.97 : 1.0,
         duration: const Duration(milliseconds: 120),
